@@ -3,6 +3,8 @@
 #include "shared.h"
 #include <cub/cub.cuh>
 
+#define cudaMalloc torch_cudaMalloc
+#define cudaFree torch_cudaFree
 
 namespace cumesh {
 

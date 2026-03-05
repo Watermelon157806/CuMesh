@@ -145,7 +145,7 @@ ext_modules = [
 # Setup
 # -------------------------------------------------
 setup(
-    name="cumesh",
+    name="lblcumesh",
     packages=["cumesh"],
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},

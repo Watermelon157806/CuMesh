@@ -8,6 +8,8 @@
 #include "../hash/api.h"
 #include "../hash/hash.cuh"
 
+#define cudaMalloc torch_cudaMalloc
+#define cudaFree torch_cudaFree
 
 template<typename T>
 static __global__ void get_vertex_num(

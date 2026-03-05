@@ -4,6 +4,9 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <torch/extension.h>
+#include <torch/torch.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/ThrustAllocator.h>
 
 #define CUDA_CHECK(call)                                \
 do {                                                    \
@@ -20,6 +23,24 @@ do {                                                    \
 } while (0)
 
 namespace cumesh {
+
+inline cudaError_t torch_cudaMalloc(void** ptr, size_t bytes) {
+    auto allocator = c10::cuda::CUDACachingAllocator::get();
+    *ptr = allocator->raw_alloc(bytes);
+    return cudaSuccess;
+}
+
+template <typename T>
+inline cudaError_t torch_cudaMalloc(T** ptr, size_t bytes) {
+    return torch_cudaMalloc(reinterpret_cast<void**>(ptr), bytes);
+}
+
+template <typename T>
+inline cudaError_t torch_cudaFree(T* ptr) {
+    auto allocator = c10::cuda::CUDACachingAllocator::get();
+    allocator->raw_delete(ptr);
+    return cudaSuccess;
+}
 
 
 /**

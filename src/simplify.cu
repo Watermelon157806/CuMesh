@@ -136,6 +136,97 @@ inline __device__ bool process_incident_tri(
     return true;
 }
 
+inline __device__ void get_other_verts(const int3 tri, const int v, int& other0, int& other1) {
+    if (tri.x == v) {
+        other0 = tri.y;
+        other1 = tri.z;
+    } else if (tri.y == v) {
+        other0 = tri.z;
+        other1 = tri.x;
+    } else if (tri.z == v) {
+        other0 = tri.x;
+        other1 = tri.y;
+    } else {
+        // should not happen
+        other0 = -1;
+        other1 = -1;
+    }
+}
+
+
+inline __device__ bool process_linked(
+    int i0,
+    int i1,
+    const int3* faces,
+    const int* vert2face,
+    const int* vert2face_offset
+) {
+    // Return true when link condition is violated.
+
+    // (Lk_v0_v ∩ Lk_v1_v) ⊆ Lk_e_v
+    for (int f0 = vert2face_offset[i0]; f0 < vert2face_offset[i0 + 1]; ++f0) {
+        int3 t0 = faces[vert2face[f0]];
+        int other0_1, other0_2;
+        get_other_verts(t0, i0, other0_1, other0_2);
+
+        int cand_vs[2] = {other0_1, other0_2};
+        for (int ci = 0; ci < 2; ++ci) {
+            int v = cand_vs[ci];
+
+            // Check v in Lk_v1_v
+            bool in_v1 = false;
+            for (int f1 = vert2face_offset[i1]; f1 < vert2face_offset[i1 + 1]; ++f1) {
+                int3 t1 = faces[vert2face[f1]];
+                int other1_1, other1_2;
+                get_other_verts(t1, i1, other1_1, other1_2);
+
+                if (other1_1 == v || other1_2 == v) {
+                    in_v1 = true;
+                    break;
+                }
+            }
+            if (!in_v1) continue;
+
+            // Check v in Lk_e_v (v is opposite vertex of triangles incident to edge (i0, i1))
+            bool in_edge_link = false;
+            for (int fe = vert2face_offset[i0]; fe < vert2face_offset[i0 + 1]; ++fe) {
+                int3 te = faces[vert2face[fe]];
+                bool has_i0 = (te.x == i0 || te.y == i0 || te.z == i0);
+                bool has_i1 = (te.x == i1 || te.y == i1 || te.z == i1);
+                if (!has_i0 || !has_i1) continue;
+
+                int opp = (te.x != i0 && te.x != i1) ? te.x : ((te.y != i0 && te.y != i1) ? te.y : te.z);
+                if (opp == v) {
+                    in_edge_link = true;
+                    break;
+                }
+            }
+            if (!in_edge_link) {
+                return true;
+            }
+        }
+    }
+
+    // (Lk_v0_e ∩ Lk_v1_e) == ∅
+    for (int f0 = vert2face_offset[i0]; f0 < vert2face_offset[i0 + 1]; ++f0) {
+        int3 t0 = faces[vert2face[f0]];
+        int a, b;
+        get_other_verts(t0, i0, a, b);
+
+        for (int f1 = vert2face_offset[i1]; f1 < vert2face_offset[i1 + 1]; ++f1) {
+            int3 t1 = faces[vert2face[f1]];
+            int c, d;
+            get_other_verts(t1, i1, c, d);
+
+            if ((a == c && b == d) || (a == d && b == c)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
 
 /**
  * Get the cost for each edge collapse
@@ -174,6 +265,11 @@ static __global__ void get_edge_collapse_cost_kernel(
     uint64_t e = edges[tid];
     int e0 = int(e >> 32);
     int e1 = int(e & 0xFFFFFFFF);
+
+    if (process_linked(e0, e1, faces, vert2face, vert2face_offset)) {
+        edge_collapse_costs[tid] = INFINITY;
+        return;
+    }
 
     // get edge vertices
     Vec3f v0(vertices[e0]);
