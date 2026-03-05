@@ -74,7 +74,7 @@ ext_modules = [
     # Main CuMesh extension
     # ===============================
     CUDAExtension(
-        name="cumesh._C",
+        name="lblcumesh._C",
         sources=[
             "src/hash/hash.cu",
 
@@ -103,7 +103,7 @@ ext_modules = [
     # cubvh
     # ===============================
     CUDAExtension(
-        name="cumesh._cubvh",
+        name="lblcumesh._cubvh",
         sources=[
             "third_party/cubvh/src/bvh.cu",
             "third_party/cubvh/src/api_gpu.cu",
@@ -130,7 +130,7 @@ ext_modules = [
     # xatlas (CPU only)
     # ===============================
     CUDAExtension(
-        name="cumesh._cumesh_xatlas",
+        name="lblcumesh._cumesh_xatlas",
         sources=[
             "third_party/xatlas/xatlas.cpp",
             "third_party/xatlas/binding.cpp",
@@ -146,7 +146,7 @@ ext_modules = [
 # -------------------------------------------------
 setup(
     name="lblcumesh",
-    packages=["cumesh"],
+    packages=["lblcumesh"],
     ext_modules=ext_modules,
     cmdclass={"build_ext": BuildExtension},
 )
