@@ -60,11 +60,11 @@ struct Buffer {
 
     void init(size_t capacity) {
         this->capacity = capacity;
-        CUDA_CHECK(cudaMalloc(&ptr, capacity * sizeof(T)));
+        CUDA_CHECK(torch_cudaMalloc(&ptr, capacity * sizeof(T)));
     }
 
     void free() {
-        if (ptr != nullptr) CUDA_CHECK(cudaFree(ptr));
+        if (ptr != nullptr) CUDA_CHECK(torch_cudaFree(ptr));
         ptr = nullptr;
         size = 0;
         capacity = 0;
@@ -82,9 +82,9 @@ struct Buffer {
         size_t new_size = size + this->size;
         if (new_size > capacity) {
             T* new_ptr;
-            CUDA_CHECK(cudaMalloc(&new_ptr, new_size * sizeof(T)));
+            CUDA_CHECK(torch_cudaMalloc(&new_ptr, new_size * sizeof(T)));
             CUDA_CHECK(cudaMemcpy(new_ptr, ptr, this->size * sizeof(T), cudaMemcpyDeviceToDevice));
-            CUDA_CHECK(cudaFree(ptr));
+            CUDA_CHECK(torch_cudaFree(ptr));
             ptr = new_ptr;
             this->capacity = new_size;
         }
