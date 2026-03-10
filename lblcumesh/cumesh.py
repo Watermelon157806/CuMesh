@@ -317,7 +317,7 @@ class CuMesh:
         """
         self.cu_mesh.unify_face_orientations()
     
-    def simplify(self, target_num_faces: int, verbose: bool=False, options: dict={}):
+    def simplify(self, target_num_faces: int, verbose: bool=False, options: dict={}, max_iterations: int=50):
         """
         Simplifies the mesh using a fast approximation algorithm with gpu acceleration.
 
@@ -338,7 +338,7 @@ class CuMesh:
         thresh = options.get('thresh', 1e-8)
         lambda_edge_length = options.get('lambda_edge_length', 1e-2)
         lambda_skinny = options.get('lambda_skinny', 1e-3)
-        while True:
+        for _ in range(max_iterations):
             if verbose:
                 pbar.set_description(f"Simplifying [thres={thresh:.2e}]")
             
