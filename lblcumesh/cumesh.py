@@ -317,7 +317,7 @@ class CuMesh:
         """
         self.cu_mesh.unify_face_orientations()
     
-    def simplify(self, target_num_faces: int, verbose: bool=False, options: dict={}, max_iterations: int=50):
+    def simplify(self, target_num_faces: int, verbose: bool=False, options: dict={}, max_iterations: int=1000):
         """
         Simplifies the mesh using a fast approximation algorithm with gpu acceleration.
 
