@@ -380,6 +380,9 @@ public:
      * This function requires:
      * - loop_boundaries
      * - loop_boundaries_offset
+     * - edge2face
+     * - edge2face_offset
+     * It triangulates each selected boundary loop without adding new vertices.
      * 
      * @param max_hole_perimeter The maximum perimeter of a hole to be filled.
      */

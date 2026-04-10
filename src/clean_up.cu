@@ -9,17 +9,6 @@
 namespace cumesh {
 
 
-static __global__ void copy_vec3f_to_float3_kernel(
-    const Vec3f* vec3f,
-    const size_t N,
-    float3* output
-) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= N) return;
-    output[tid] = make_float3(vec3f[tid].x, vec3f[tid].y, vec3f[tid].z);
-}
-
-
 template<typename T, typename U>
 static __global__ void copy_T_to_T3_kernel(
     const T* input,
@@ -390,41 +379,281 @@ static __global__ void compute_loop_boundary_lengths(
 }
 
 
-static __global__ void compute_loop_boundary_midpoints(
-    const float3* vertices,
-    const uint64_t* edges,
-    const int* loop_boundaries,
-    const size_t E,
-    Vec3f* loop_boundary_midpoints
-) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= E) return;
-    uint64_t edge = edges[loop_boundaries[tid]];
-    int e0 = int(edge & 0xFFFFFFFF);
-    int e1 = int(edge >> 32);
-    Vec3f v0 = Vec3f(vertices[e0]);
-    Vec3f v1 = Vec3f(vertices[e1]);
-    loop_boundary_midpoints[tid] = (v0 + v1) * 0.5f;
+static __device__ __forceinline__ int packed_edge_v0(uint64_t edge) {
+    return int(edge >> 32);
 }
 
 
-static __global__ void connect_new_vertices_kernel(
-    const uint64_t* edges,
-    const int* loop_boundaries,
-    const int* loop_bound_loop_ids,
-    const size_t L,
-    const size_t V,
-    int3* faces
+static __device__ __forceinline__ int packed_edge_v1(uint64_t edge) {
+    return int(edge & 0xFFFFFFFF);
+}
+
+
+static __device__ __forceinline__ bool face_has_directed_edge(
+    const int3& face,
+    const int u,
+    const int v
 ) {
-    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid >= L) return;
-    int loop_id = loop_bound_loop_ids[tid];
-    int loop_boundary = loop_boundaries[tid];
-    uint64_t e = edges[loop_boundary];
-    int e0 = int(e & 0xFFFFFFFF);
-    int e1 = int(e >> 32);
-    int new_v_id = loop_id + V;
-    faces[tid] = {e0, e1, new_v_id};
+    return
+        (face.x == u && face.y == v) ||
+        (face.y == u && face.z == v) ||
+        (face.z == u && face.x == v);
+}
+
+
+static __global__ void order_selected_boundary_loops_kernel(
+    const int3* faces,
+    const uint64_t* edges,
+    const int* edge2face,
+    const int* edge2face_offset,
+    const int* loop_boundaries,
+    const int* loop_boundaries_offset,
+    const int num_loops,
+    int* ordered_loop_vertices,
+    uint8_t* loop_is_valid
+) {
+    if (blockIdx.x >= num_loops || threadIdx.x != 0) return;
+
+    const int loop_id = blockIdx.x;
+    const int start = loop_boundaries_offset[loop_id];
+    const int end = loop_boundaries_offset[loop_id + 1];
+    const int count = end - start;
+    if (count < 3) {
+        loop_is_valid[loop_id] = 0;
+        return;
+    }
+
+    const int first_edge_id = loop_boundaries[start];
+    const int3 first_face = faces[edge2face[edge2face_offset[first_edge_id]]];
+    const uint64_t first_edge = edges[first_edge_id];
+    int first_u = packed_edge_v0(first_edge);
+    int first_v = packed_edge_v1(first_edge);
+    if (!face_has_directed_edge(first_face, first_u, first_v)) {
+        const int tmp = first_u;
+        first_u = first_v;
+        first_v = tmp;
+    }
+
+    ordered_loop_vertices[start + 0] = first_u;
+    int prev_edge_id = first_edge_id;
+    int current_vertex = first_v;
+    bool valid = true;
+
+    for (int i = 1; i < count; ++i) {
+        ordered_loop_vertices[start + i] = current_vertex;
+
+        int next_edge_id = -1;
+        int next_vertex = -1;
+        for (int j = start; j < end; ++j) {
+            const int candidate_edge_id = loop_boundaries[j];
+            if (candidate_edge_id == prev_edge_id) continue;
+
+            const int3 candidate_face = faces[edge2face[edge2face_offset[candidate_edge_id]]];
+            const uint64_t candidate_edge = edges[candidate_edge_id];
+            int u = packed_edge_v0(candidate_edge);
+            int v = packed_edge_v1(candidate_edge);
+            if (!face_has_directed_edge(candidate_face, u, v)) {
+                const int tmp = u;
+                u = v;
+                v = tmp;
+            }
+
+            if (u == current_vertex) {
+                next_edge_id = candidate_edge_id;
+                next_vertex = v;
+                break;
+            }
+        }
+
+        if (next_edge_id < 0) {
+            valid = false;
+            break;
+        }
+
+        prev_edge_id = next_edge_id;
+        current_vertex = next_vertex;
+    }
+
+    if (valid && current_vertex != first_u) {
+        valid = false;
+    }
+    if (!valid) {
+        loop_is_valid[loop_id] = 0;
+        return;
+    }
+
+    // Reverse the oriented boundary loop so the new patch uses each shared edge in the opposite direction.
+    for (int i = 0; i < count / 2; ++i) {
+        const int j = count - 1 - i;
+        const int tmp = ordered_loop_vertices[start + i];
+        ordered_loop_vertices[start + i] = ordered_loop_vertices[start + j];
+        ordered_loop_vertices[start + j] = tmp;
+    }
+
+    loop_is_valid[loop_id] = 1;
+}
+
+
+static __device__ __forceinline__ int find_edge_index(
+    const uint64_t* edges,
+    const int num_edges,
+    const uint64_t edge_key
+) {
+    int left = 0;
+    int right = num_edges - 1;
+    while (left <= right) {
+        const int mid = left + ((right - left) >> 1);
+        const uint64_t value = edges[mid];
+        if (value == edge_key) return mid;
+        if (value < edge_key) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    return -1;
+}
+
+
+static __global__ void compute_ear_clip_triangle_counts_kernel(
+    const uint64_t* edges,
+    const int num_edges,
+    const int* loop_boundaries_offset,
+    const int* ordered_loop_vertices,
+    int* loop_work_indices,
+    const uint8_t* loop_is_valid,
+    const int num_loops,
+    int* loop_triangle_counts
+) {
+    if (blockIdx.x >= num_loops || threadIdx.x != 0) return;
+
+    const int loop_id = blockIdx.x;
+    loop_triangle_counts[loop_id] = 0;
+    if (!loop_is_valid[loop_id]) return;
+
+    const int loop_start = loop_boundaries_offset[loop_id];
+    const int loop_end = loop_boundaries_offset[loop_id + 1];
+    const int loop_size = loop_end - loop_start;
+    if (loop_size < 3) return;
+
+    for (int i = 0; i < loop_size; ++i) {
+        loop_work_indices[loop_start + i] = i;
+    }
+
+    int work_size = loop_size;
+    int tri_count = 0;
+    while (work_size > 3) {
+        int ear_i = -1;
+        for (int i = 0; i < work_size; ++i) {
+            const int prev_local = loop_work_indices[loop_start + (i - 1 + work_size) % work_size];
+            const int curr_local = loop_work_indices[loop_start + i];
+            const int next_local = loop_work_indices[loop_start + (i + 1) % work_size];
+            const int a = ordered_loop_vertices[loop_start + prev_local];
+            const int b = ordered_loop_vertices[loop_start + curr_local];
+            const int c = ordered_loop_vertices[loop_start + next_local];
+            if (a == b || b == c || c == a) continue;
+
+            const uint64_t diagonal = (uint64_t(min(a, c)) << 32) | uint64_t(max(a, c));
+            if (find_edge_index(edges, num_edges, diagonal) >= 0) continue;
+
+            ear_i = i;
+            break;
+        }
+
+        if (ear_i < 0) {
+            loop_triangle_counts[loop_id] = 0;
+            return;
+        }
+
+        for (int i = ear_i; i < work_size - 1; ++i) {
+            loop_work_indices[loop_start + i] = loop_work_indices[loop_start + i + 1];
+        }
+        work_size--;
+        tri_count++;
+    }
+
+    if (work_size == 3) {
+        tri_count++;
+    }
+    loop_triangle_counts[loop_id] = tri_count;
+}
+
+
+static __global__ void triangulate_selected_boundary_loops_kernel(
+    const uint64_t* edges,
+    const int num_edges,
+    const int* loop_boundaries_offset,
+    const int* ordered_loop_vertices,
+    int* loop_work_indices,
+    const int* loop_triangle_offsets,
+    const int* loop_triangle_counts,
+    const uint8_t* loop_is_valid,
+    const int num_loops,
+    int3* output_faces
+) {
+    if (blockIdx.x >= num_loops || threadIdx.x != 0) return;
+
+    const int loop_id = blockIdx.x;
+    if (!loop_is_valid[loop_id]) return;
+
+    const int loop_start = loop_boundaries_offset[loop_id];
+    const int loop_end = loop_boundaries_offset[loop_id + 1];
+    const int loop_size = loop_end - loop_start;
+    const int tri_start = loop_triangle_offsets[loop_id];
+    const int tri_count_target = loop_triangle_counts[loop_id];
+    if (loop_size < 3 || tri_count_target == 0) return;
+
+    for (int i = 0; i < loop_size; ++i) {
+        loop_work_indices[loop_start + i] = i;
+    }
+    int work_size = loop_size;
+    int tri_count = 0;
+    while (work_size > 3) {
+        int ear_i = -1;
+        for (int i = 0; i < work_size; ++i) {
+            const int prev_local = loop_work_indices[loop_start + (i - 1 + work_size) % work_size];
+            const int curr_local = loop_work_indices[loop_start + i];
+            const int next_local = loop_work_indices[loop_start + (i + 1) % work_size];
+            const int a = ordered_loop_vertices[loop_start + prev_local];
+            const int b = ordered_loop_vertices[loop_start + curr_local];
+            const int c = ordered_loop_vertices[loop_start + next_local];
+            if (a == b || b == c || c == a) continue;
+
+            const uint64_t diagonal = (uint64_t(min(a, c)) << 32) | uint64_t(max(a, c));
+            if (find_edge_index(edges, num_edges, diagonal) >= 0) continue;
+            ear_i = i;
+            break;
+        }
+
+        if (ear_i < 0) {
+            return;
+        }
+
+        const int prev_local = loop_work_indices[loop_start + (ear_i - 1 + work_size) % work_size];
+        const int curr_local = loop_work_indices[loop_start + ear_i];
+        const int next_local = loop_work_indices[loop_start + (ear_i + 1) % work_size];
+        int3 tri = {
+            ordered_loop_vertices[loop_start + prev_local],
+            ordered_loop_vertices[loop_start + curr_local],
+            ordered_loop_vertices[loop_start + next_local]
+        };
+        output_faces[tri_start + tri_count] = tri;
+        tri_count++;
+
+        for (int i = ear_i; i < work_size - 1; ++i) {
+            loop_work_indices[loop_start + i] = loop_work_indices[loop_start + i + 1];
+        }
+        work_size--;
+    }
+
+    if (work_size == 3) {
+        int3 tri = {
+            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 0]],
+            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 1]],
+            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 2]]
+        };
+        output_faces[tri_start + tri_count] = tri;
+    }
 }
 
 
@@ -439,8 +668,10 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
     if (this->loop_boundaries.is_empty() || this->loop_boundaries_offset.is_empty()) {
         this->get_boundary_loops();
     }
+    if (this->edge2face.is_empty() || this->edge2face_offset.is_empty()) {
+        this->get_edge_face_adjacency();
+    }
 
-    size_t V = this->vertices.size;
     size_t F = this->faces.size;
     size_t L = this->num_bound_loops;
     size_t E = this->loop_boundaries.size;
@@ -508,6 +739,7 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
     int *cu_new_loop_boundaries_cnt, *cu_new_num_bound_loops;
     CUDA_CHECK(cudaMalloc(&cu_new_loop_boundaries_cnt, (L+1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_new_num_bound_loops, sizeof(int)));
+    CUDA_CHECK(cudaMemset(cu_new_loop_boundaries_cnt, 0, (L + 1) * sizeof(int)));
     temp_storage_bytes = 0;
     CUDA_CHECK(cub::DeviceSelect::Flagged(
         nullptr, temp_storage_bytes,
@@ -588,9 +820,9 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
     CUDA_CHECK(cudaFree(cu_new_num_loop_boundaries));
     CUDA_CHECK(cudaFree(cu_loop_boundary_mask));
 
-    // Reconstruct new bound loops
+    // Reconstruct the selected loop offsets.
     int* cu_new_loop_boundaries_offset;
-    CUDA_CHECK(cudaMalloc(&cu_new_loop_boundaries_offset, (new_num_loop_boundaries+1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_new_loop_boundaries_offset, (new_num_bound_loops + 1) * sizeof(int)));
     temp_storage_bytes = 0;
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
@@ -603,89 +835,108 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
         cu_new_loop_boundaries_cnt, cu_new_loop_boundaries_offset,
         new_num_bound_loops + 1
     ));
-    int* cu_new_loop_bound_loop_ids;
-    CUDA_CHECK(cudaMalloc(&cu_new_loop_bound_loop_ids, new_num_loop_boundaries * sizeof(int)));
-    CUDA_CHECK(cudaMemset(cu_new_loop_bound_loop_ids, 0, new_num_loop_boundaries * sizeof(int)));
-    if (new_num_bound_loops > 1) {
-        set_flag_kernel<<<(new_num_bound_loops-1+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
-            cu_new_loop_boundaries_offset+1, new_num_bound_loops-1,
-            cu_new_loop_bound_loop_ids
-        );
-        CUDA_CHECK(cudaGetLastError());
+    int* cu_ordered_loop_vertices;
+    uint8_t* cu_loop_is_valid;
+    CUDA_CHECK(cudaMalloc(&cu_ordered_loop_vertices, new_num_loop_boundaries * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_loop_is_valid, new_num_bound_loops * sizeof(uint8_t)));
+    order_selected_boundary_loops_kernel<<<new_num_bound_loops, 1>>>(
+        this->faces.ptr,
+        this->edges.ptr,
+        this->edge2face.ptr,
+        this->edge2face_offset.ptr,
+        cu_new_loop_boundaries,
+        cu_new_loop_boundaries_offset,
+        new_num_bound_loops,
+        cu_ordered_loop_vertices,
+        cu_loop_is_valid
+    );
+    CUDA_CHECK(cudaGetLastError());
+
+    int* cu_loop_triangle_counts;
+    int* cu_loop_triangle_offsets;
+    int* cu_loop_work_indices;
+    CUDA_CHECK(cudaMalloc(&cu_loop_triangle_counts, (new_num_bound_loops + 1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_loop_triangle_offsets, (new_num_bound_loops + 1) * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_loop_work_indices, new_num_loop_boundaries * sizeof(int)));
+    CUDA_CHECK(cudaMemset(cu_loop_triangle_counts, 0, (new_num_bound_loops + 1) * sizeof(int)));
+    compute_ear_clip_triangle_counts_kernel<<<new_num_bound_loops, 1>>>(
+        this->edges.ptr,
+        this->edges.size,
+        cu_new_loop_boundaries_offset,
+        cu_ordered_loop_vertices,
+        cu_loop_work_indices,
+        cu_loop_is_valid,
+        new_num_bound_loops,
+        cu_loop_triangle_counts
+    );
+    CUDA_CHECK(cudaGetLastError());
+
+    temp_storage_bytes = 0;
+    CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
+        nullptr, temp_storage_bytes,
+        cu_loop_triangle_counts, cu_loop_triangle_offsets,
+        new_num_bound_loops + 1
+    ));
+    this->cub_temp_storage.resize(temp_storage_bytes);
+    CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
+        this->cub_temp_storage.ptr, temp_storage_bytes,
+        cu_loop_triangle_counts, cu_loop_triangle_offsets,
+        new_num_bound_loops + 1
+    ));
+
+    int new_num_faces_to_add = 0;
+    CUDA_CHECK(cudaMemcpy(
+        &new_num_faces_to_add,
+        cu_loop_triangle_offsets + new_num_bound_loops,
+        sizeof(int),
+        cudaMemcpyDeviceToHost
+    ));
+
+    if (new_num_faces_to_add == 0) {
+        CUDA_CHECK(cudaFree(cu_new_loop_boundaries));
+        CUDA_CHECK(cudaFree(cu_new_loop_boundaries_cnt));
+        CUDA_CHECK(cudaFree(cu_new_loop_boundaries_offset));
+        CUDA_CHECK(cudaFree(cu_ordered_loop_vertices));
+        CUDA_CHECK(cudaFree(cu_loop_is_valid));
+        CUDA_CHECK(cudaFree(cu_loop_triangle_counts));
+        CUDA_CHECK(cudaFree(cu_loop_triangle_offsets));
+        CUDA_CHECK(cudaFree(cu_loop_work_indices));
+        return;
     }
-    temp_storage_bytes = 0;
-    CUDA_CHECK(cub::DeviceScan::InclusiveSum(
-        nullptr, temp_storage_bytes,
-        cu_new_loop_bound_loop_ids,
-        new_num_loop_boundaries
-    ));
-    this->cub_temp_storage.resize(temp_storage_bytes);
-    CUDA_CHECK(cub::DeviceScan::InclusiveSum(
-        this->cub_temp_storage.ptr, temp_storage_bytes,
-        cu_new_loop_bound_loop_ids,
-        new_num_loop_boundaries
+
+    int3* cu_added_faces;
+    CUDA_CHECK(cudaMalloc(&cu_added_faces, new_num_faces_to_add * sizeof(int3)));
+    triangulate_selected_boundary_loops_kernel<<<new_num_bound_loops, 1>>>(
+        this->edges.ptr,
+        this->edges.size,
+        cu_new_loop_boundaries_offset,
+        cu_ordered_loop_vertices,
+        cu_loop_work_indices,
+        cu_loop_triangle_offsets,
+        cu_loop_triangle_counts,
+        cu_loop_is_valid,
+        new_num_bound_loops,
+        cu_added_faces
+    );
+    CUDA_CHECK(cudaGetLastError());
+
+    this->faces.extend(new_num_faces_to_add);
+    CUDA_CHECK(cudaMemcpy(
+        this->faces.ptr + F,
+        cu_added_faces,
+        new_num_faces_to_add * sizeof(int3),
+        cudaMemcpyDeviceToDevice
     ));
 
-    // Calculate new vertex positions as average of loop vertices
-    Vec3f* cu_new_loop_bound_centers;
-    CUDA_CHECK(cudaMalloc(&cu_new_loop_bound_centers, new_num_loop_boundaries * sizeof(Vec3f)));
-    compute_loop_boundary_midpoints<<<(new_num_loop_boundaries+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
-        this->vertices.ptr,
-        this->edges.ptr,
-        cu_new_loop_boundaries,
-        new_num_loop_boundaries,
-        cu_new_loop_bound_centers
-    );
-    CUDA_CHECK(cudaGetLastError());
-    Vec3f* cu_new_vertices;
-    CUDA_CHECK(cudaMalloc(&cu_new_vertices, new_num_bound_loops * sizeof(Vec3f)));
-    temp_storage_bytes = 0;
-    CUDA_CHECK(cub::DeviceSegmentedReduce::Sum(
-        nullptr, temp_storage_bytes,
-        cu_new_loop_bound_centers, cu_new_vertices,
-        new_num_bound_loops,
-        cu_new_loop_boundaries_offset,
-        cu_new_loop_boundaries_offset + 1
-    ));
-    this->cub_temp_storage.resize(temp_storage_bytes);
-    CUDA_CHECK(cub::DeviceSegmentedReduce::Sum(
-        this->cub_temp_storage.ptr, temp_storage_bytes,
-        cu_new_loop_bound_centers, cu_new_vertices,
-        new_num_bound_loops,
-        cu_new_loop_boundaries_offset,
-        cu_new_loop_boundaries_offset + 1
-    ));
-    CUDA_CHECK(cudaFree(cu_new_loop_bound_centers));
-    CUDA_CHECK(cudaFree(cu_new_loop_boundaries_offset));
-    inplace_div_kernel<<<(new_num_bound_loops+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
-        cu_new_vertices,
-        cu_new_loop_boundaries_cnt,
-        new_num_bound_loops
-    );
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaFree(cu_new_loop_boundaries_cnt));
-
-    // Update mesh
-    this->vertices.extend(new_num_bound_loops);
-    this->faces.extend(new_num_loop_boundaries);
-    copy_vec3f_to_float3_kernel<<<(new_num_bound_loops+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
-        cu_new_vertices,
-        new_num_bound_loops,
-        this->vertices.ptr + V
-    );
-    CUDA_CHECK(cudaGetLastError());
-    CUDA_CHECK(cudaFree(cu_new_vertices));
-    connect_new_vertices_kernel<<<(new_num_loop_boundaries+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
-        this->edges.ptr,
-        cu_new_loop_boundaries,
-        cu_new_loop_bound_loop_ids,
-        new_num_loop_boundaries,
-        V,
-        this->faces.ptr + F
-    );
-    CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaFree(cu_new_loop_boundaries));
-    CUDA_CHECK(cudaFree(cu_new_loop_bound_loop_ids));
+    CUDA_CHECK(cudaFree(cu_new_loop_boundaries_cnt));
+    CUDA_CHECK(cudaFree(cu_new_loop_boundaries_offset));
+    CUDA_CHECK(cudaFree(cu_ordered_loop_vertices));
+    CUDA_CHECK(cudaFree(cu_loop_is_valid));
+    CUDA_CHECK(cudaFree(cu_loop_triangle_counts));
+    CUDA_CHECK(cudaFree(cu_loop_triangle_offsets));
+    CUDA_CHECK(cudaFree(cu_loop_work_indices));
+    CUDA_CHECK(cudaFree(cu_added_faces));
 
     // Delete all cached info since mesh has changed
     this->clear_cache();
