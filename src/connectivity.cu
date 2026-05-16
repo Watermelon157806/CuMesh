@@ -65,7 +65,7 @@ void CuMesh::get_vertex_face_adjacency() {
     // get neighboring face count for each vertex
     this->vert2face_cnt.resize(V + 1);
     this->vert2face_cnt.zero();
-    get_neighbor_face_cnt_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(this->faces.ptr, F, this->vert2face_cnt.ptr);
+    get_neighbor_face_cnt_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(this->faces.ptr, F, this->vert2face_cnt.ptr);
     CUDA_CHECK(cudaGetLastError());
 
     // allocate memory for neighboring face ids
@@ -74,19 +74,17 @@ void CuMesh::get_vertex_face_adjacency() {
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         this->vert2face_cnt.ptr, this->vert2face_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->vert2face_cnt.ptr, this->vert2face_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
     this->vert2face.resize(F*3);
 
     // fill neighboring face ids for each vertex
     this->vert2face_cnt.zero();
-    fill_neighbor_face_ids_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(this->faces.ptr, F, 
+    fill_neighbor_face_ids_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(this->faces.ptr, F,
         this->vert2face.ptr,
         this->vert2face_offset.ptr,
         this->vert2face_cnt.ptr
@@ -123,7 +121,7 @@ static __global__ void expand_edges_kernel(
 void CuMesh::get_edges() {
     size_t F = this->faces.size;
     this->edges.resize(F * 3);
-    expand_edges_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(this->faces.ptr, F, this->edges.ptr);
+    expand_edges_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(this->faces.ptr, F, this->edges.ptr);
     CUDA_CHECK(cudaGetLastError());
 
     // sort edges
@@ -133,15 +131,13 @@ void CuMesh::get_edges() {
         nullptr, temp_storage_bytes,
         this->edges.ptr,
         reinterpret_cast<uint64_t*>(this->temp_storage.ptr),
-        F * 3
-    ));
+        F * 3, 0, sizeof(*(this->edges.ptr)) * 8, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceRadixSort::SortKeys(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->edges.ptr,
         reinterpret_cast<uint64_t*>(this->temp_storage.ptr),
-        F * 3
-    ));
+        F * 3, 0, sizeof(*(this->edges.ptr)) * 8, cumesh::torch_cuda_stream()));
 
     // unique edges
     int* num_edges;
@@ -150,14 +146,12 @@ void CuMesh::get_edges() {
     CUDA_CHECK(cub::DeviceRunLengthEncode::Encode(
         nullptr, temp_storage_bytes,
         reinterpret_cast<uint64_t*>(this->temp_storage.ptr), this->edges.ptr, this->edge2face_cnt.ptr, num_edges,
-        F * 3
-    ));
+        F * 3, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceRunLengthEncode::Encode(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         reinterpret_cast<uint64_t*>(this->temp_storage.ptr), this->edges.ptr, this->edge2face_cnt.ptr, num_edges,
-        F * 3
-    ));
+        F * 3, cumesh::torch_cuda_stream()));
     CUDA_CHECK(cudaMemcpy(&this->edges.size, num_edges, sizeof(int), cudaMemcpyDeviceToHost));
     this->edge2face_cnt.size = this->edges.size;
     CUDA_CHECK(cudaFree(num_edges));
@@ -234,14 +228,12 @@ void CuMesh::get_edge_face_adjacency() {
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         this->edge2face_cnt.ptr, this->edge2face_offset.ptr,
-        E + 1
-    ));
+        E + 1, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->edge2face_cnt.ptr, this->edge2face_offset.ptr,
-        E + 1
-    ));
+        E + 1, cumesh::torch_cuda_stream()));
 
     // allocate memory for edge2face
     int total_edge_face_cnt;
@@ -252,7 +244,7 @@ void CuMesh::get_edge_face_adjacency() {
     this->face2edge.resize(F);
 
     // get edge-face adjacency
-    get_edge_face_adjacency_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_edge_face_adjacency_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->faces.ptr,
         this->edges.ptr,
         this->edge2face_cnt.ptr,
@@ -333,7 +325,7 @@ void CuMesh::get_vertex_edge_adjacency() {
     // get vertex adjacent edge number
     this->vert2edge_cnt.resize(V + 1);
     this->vert2edge_cnt.zero();
-    get_vertex_edge_cnt_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_vertex_edge_cnt_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr, E, this->vert2edge_cnt.ptr
     );
     CUDA_CHECK(cudaGetLastError());
@@ -344,19 +336,17 @@ void CuMesh::get_vertex_edge_adjacency() {
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         this->vert2edge_cnt.ptr, this->vert2edge_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->vert2edge_cnt.ptr, this->vert2edge_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
 
     // get vertex-edge adjacency
     this->vert2edge.resize(2 * E);
     this->vert2edge_cnt.zero();
-    get_vertex_edge_adjacency_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_vertex_edge_adjacency_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr, E,
         this->vert2edge.ptr,
         this->vert2edge_offset.ptr,
@@ -421,20 +411,18 @@ void CuMesh::get_boundary_info() {
     CUDA_CHECK(cudaMalloc(&cu_num_boundary, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_edge_idx, E * sizeof(int)));
     this->boundaries.resize(E);
-    arange_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(cu_edge_idx, E);
+    arange_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(cu_edge_idx, E);
     CUDA_CHECK(cub::DeviceSelect::If(
         nullptr, temp_storage_bytes,
         cu_edge_idx, this->boundaries.ptr, cu_num_boundary,
         E,
-        is_boundary_edge{this->edge2face_cnt.ptr}
-    ));
+        is_boundary_edge{this->edge2face_cnt.ptr}, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceSelect::If(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_edge_idx, this->boundaries.ptr, cu_num_boundary,
         E,
-        is_boundary_edge{this->edge2face_cnt.ptr}
-    ));
+        is_boundary_edge{this->edge2face_cnt.ptr}, cumesh::torch_cuda_stream()));
     CUDA_CHECK(cudaMemcpy(&this->boundaries.size, cu_num_boundary, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(cu_num_boundary));
     CUDA_CHECK(cudaFree(cu_edge_idx));
@@ -443,7 +431,7 @@ void CuMesh::get_boundary_info() {
     this->vert_is_boundary.resize(this->vertices.size);
     this->vert_is_boundary.zero();
     if (this->boundaries.size > 0) {
-        set_boundary_vertex_kernel<<<(this->boundaries.size+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+        set_boundary_vertex_kernel<<<(this->boundaries.size+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             this->edges.ptr, this->boundaries.ptr, this->edge2face_cnt.ptr,
             this->boundaries.size, this->vert_is_boundary.ptr
         );
@@ -530,7 +518,7 @@ void CuMesh::get_vertex_boundary_adjacency() {
     // get vertex adjacent boundary number
     this->vert2bound_cnt.resize(V + 1);
     this->vert2bound_cnt.zero();
-    get_vertex_boundary_cnt_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_vertex_boundary_cnt_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr, this->boundaries.ptr, B, this->vert2bound_cnt.ptr
     );
     CUDA_CHECK(cudaGetLastError());
@@ -541,19 +529,17 @@ void CuMesh::get_vertex_boundary_adjacency() {
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         this->vert2bound_cnt.ptr, this->vert2bound_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->vert2bound_cnt.ptr, this->vert2bound_offset.ptr,
-        V + 1
-    ));
+        V + 1, cumesh::torch_cuda_stream()));
 
     // get vertex-boundary adjacency
     this->vert2bound.resize(2 * B);
     this->vert2bound_cnt.zero();
-    get_vertex_boundary_adjacency_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_vertex_boundary_adjacency_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr, this->boundaries.ptr, B,
         this->vert2bound.ptr,
         this->vert2bound_offset.ptr,
@@ -608,7 +594,7 @@ void CuMesh::get_vertex_is_manifold() {
 
     // get vertex is manifold
     this->vert_is_manifold.resize(V);
-    get_vertex_is_manifold_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_vertex_is_manifold_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->vert2edge.ptr,
         this->vert2edge_offset.ptr,
         this->edge2face_cnt.ptr,
@@ -673,21 +659,19 @@ void CuMesh::get_manifold_face_adjacency() {
     CUDA_CHECK(cudaMalloc(&cu_num_manifold_edges, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_edge_idx, E * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_manifold_edge_idx, E * sizeof(int)));
-    arange_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(cu_edge_idx, E);
+    arange_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(cu_edge_idx, E);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cub::DeviceSelect::If(
         nullptr, temp_storage_bytes,
         cu_edge_idx, cu_manifold_edge_idx, cu_num_manifold_edges,
         E,
-        is_manifold_edge{this->edge2face_cnt.ptr}
-    ));
+        is_manifold_edge{this->edge2face_cnt.ptr}, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceSelect::If(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_edge_idx, cu_manifold_edge_idx, cu_num_manifold_edges,
         E,
-        is_manifold_edge{this->edge2face_cnt.ptr}
-    ));
+        is_manifold_edge{this->edge2face_cnt.ptr}, cumesh::torch_cuda_stream()));
     int manifold_edge_count;
     CUDA_CHECK(cudaMemcpy(&manifold_edge_count, cu_num_manifold_edges, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(cu_num_manifold_edges));
@@ -695,7 +679,7 @@ void CuMesh::get_manifold_face_adjacency() {
 
     // set manifold_face_adj
     this->manifold_face_adj.resize(manifold_edge_count);
-    set_manifold_face_adj_kernel<<<(manifold_edge_count+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    set_manifold_face_adj_kernel<<<(manifold_edge_count+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_manifold_edge_idx,
         this->edge2face.ptr,
         this->edge2face_offset.ptr,
@@ -753,21 +737,19 @@ void CuMesh::get_manifold_boundary_adjacency() {
     CUDA_CHECK(cudaMalloc(&cu_num_manifold_boundary_verts, sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_vert_idx, V * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_manifold_vert_idx, V * sizeof(int)));
-    arange_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(cu_vert_idx, V);
+    arange_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(cu_vert_idx, V);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cub::DeviceSelect::If(
         nullptr, temp_storage_bytes,
         cu_vert_idx, cu_manifold_vert_idx, cu_num_manifold_boundary_verts,
         V,
-        is_manifold_boundary_vertex{this->vert_is_manifold.ptr, this->vert_is_boundary.ptr}
-    ));
+        is_manifold_boundary_vertex{this->vert_is_manifold.ptr, this->vert_is_boundary.ptr}, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceSelect::If(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_vert_idx, cu_manifold_vert_idx, cu_num_manifold_boundary_verts,
         V,
-        is_manifold_boundary_vertex{this->vert_is_manifold.ptr, this->vert_is_boundary.ptr}
-    ));
+        is_manifold_boundary_vertex{this->vert_is_manifold.ptr, this->vert_is_boundary.ptr}, cumesh::torch_cuda_stream()));
     int manifold_boundary_vert_count;
     CUDA_CHECK(cudaMemcpy(&manifold_boundary_vert_count, cu_num_manifold_boundary_verts, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(cu_num_manifold_boundary_verts));
@@ -781,7 +763,7 @@ void CuMesh::get_manifold_boundary_adjacency() {
 
     // set manifold_bound_adj
     this->manifold_bound_adj.resize(manifold_boundary_vert_count);
-    set_manifold_bound_adj_kernel<<<(manifold_boundary_vert_count+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    set_manifold_bound_adj_kernel<<<(manifold_boundary_vert_count+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_manifold_vert_idx,
         this->vert2bound.ptr,
         this->vert2bound_offset.ptr,
@@ -802,7 +784,7 @@ void CuMesh::get_connected_components() {
 
     // Iterative Hook and Compress
     this->conn_comp_ids.resize(F);
-    arange_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(this->conn_comp_ids.ptr, F);
+    arange_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(this->conn_comp_ids.ptr, F);
     CUDA_CHECK(cudaGetLastError());
     int* cu_end_flag; int h_end_flag;
     CUDA_CHECK(cudaMalloc(&cu_end_flag, sizeof(int)));
@@ -811,7 +793,7 @@ void CuMesh::get_connected_components() {
         CUDA_CHECK(cudaMemcpy(cu_end_flag, &h_end_flag, sizeof(int), cudaMemcpyHostToDevice));
 
         // Hook
-        hook_edges_kernel<<<(M+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+        hook_edges_kernel<<<(M+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             this->manifold_face_adj.ptr,
             M,
             this->conn_comp_ids.ptr,
@@ -820,7 +802,7 @@ void CuMesh::get_connected_components() {
         CUDA_CHECK(cudaGetLastError());
 
         // Compress
-        compress_components_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+        compress_components_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             this->conn_comp_ids.ptr,
             F
         );
@@ -849,7 +831,7 @@ void CuMesh::get_boundary_connected_components() {
 
     // Iterative Hook and Compress
     this->bound_conn_comp_ids.resize(B);
-    arange_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(this->bound_conn_comp_ids.ptr, B);
+    arange_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(this->bound_conn_comp_ids.ptr, B);
     CUDA_CHECK(cudaGetLastError());
     int* cu_end_flag; int h_end_flag;
     CUDA_CHECK(cudaMalloc(&cu_end_flag, sizeof(int)));
@@ -858,7 +840,7 @@ void CuMesh::get_boundary_connected_components() {
         CUDA_CHECK(cudaMemcpy(cu_end_flag, &h_end_flag, sizeof(int), cudaMemcpyHostToDevice));
 
         // Hook
-        hook_edges_kernel<<<(M+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+        hook_edges_kernel<<<(M+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             this->manifold_bound_adj.ptr,
             M,
             this->bound_conn_comp_ids.ptr,
@@ -867,7 +849,7 @@ void CuMesh::get_boundary_connected_components() {
         CUDA_CHECK(cudaGetLastError());
 
         // Compress
-        compress_components_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+        compress_components_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             this->bound_conn_comp_ids.ptr,
             B
         );
@@ -943,13 +925,13 @@ void CuMesh::get_boundary_loops() {
     // Check if boundary components are loops
     int* cu_is_bound_conn_comp_loop;
     CUDA_CHECK(cudaMalloc(&cu_is_bound_conn_comp_loop, this->num_bound_conn_comps * sizeof(int)));
-    fill_kernel<<<(this->num_bound_conn_comps+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    fill_kernel<<<(this->num_bound_conn_comps+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_is_bound_conn_comp_loop,
         this->num_bound_conn_comps,
         1
     );
     CUDA_CHECK(cudaGetLastError());
-    is_bound_conn_comp_loop_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    is_bound_conn_comp_loop_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr,
         this->boundaries.ptr,
         this->bound_conn_comp_ids.ptr,
@@ -966,15 +948,13 @@ void CuMesh::get_boundary_loops() {
         nullptr, temp_storage_bytes,
         cu_is_bound_conn_comp_loop,
         cu_num_bound_loops,
-        this->num_bound_conn_comps
-    ));
+        this->num_bound_conn_comps, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceReduce::Sum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_is_bound_conn_comp_loop,
         cu_num_bound_loops,
-        this->num_bound_conn_comps
-    ));
+        this->num_bound_conn_comps, cumesh::torch_cuda_stream()));
     CUDA_CHECK(cudaMemcpy(&this->num_bound_loops, cu_num_bound_loops, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(cu_num_bound_loops));
     if (this->num_bound_loops == 0) {
@@ -991,20 +971,18 @@ void CuMesh::get_boundary_loops() {
         nullptr, temp_storage_bytes,
         this->bound_conn_comp_ids.ptr, cu_bound_conn_comp_ids_sorted,
         this->boundaries.ptr, cu_bound_sorted,
-        B
-    ));
+        B, 0, sizeof(*(this->bound_conn_comp_ids.ptr)) * 8, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceRadixSort::SortPairs(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->bound_conn_comp_ids.ptr, cu_bound_conn_comp_ids_sorted,
         this->boundaries.ptr, cu_bound_sorted,
-        B
-    ));
+        B, 0, sizeof(*(this->bound_conn_comp_ids.ptr)) * 8, cumesh::torch_cuda_stream()));
 
     // Select loops
     int* cu_bound_is_on_loop;
     CUDA_CHECK(cudaMalloc(&cu_bound_is_on_loop, B * sizeof(int)));
-    index_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    index_kernel<<<(B+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_is_bound_conn_comp_loop,
         cu_bound_conn_comp_ids_sorted,
         B,
@@ -1020,14 +998,12 @@ void CuMesh::get_boundary_loops() {
     CUDA_CHECK(cub::DeviceSelect::Flagged(
         nullptr, temp_storage_bytes,
         cu_bound_sorted, cu_bound_is_on_loop, this->loop_boundaries.ptr, cu_num_bound_on_loop,
-        B
-    ));
+        B, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceSelect::Flagged(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_bound_sorted, cu_bound_is_on_loop, this->loop_boundaries.ptr, cu_num_bound_on_loop,
-        B
-    ));
+        B, cumesh::torch_cuda_stream()));
     int num_bound_on_loop;
     CUDA_CHECK(cudaMemcpy(&num_bound_on_loop, cu_num_bound_on_loop, sizeof(int), cudaMemcpyDeviceToHost));
     CUDA_CHECK(cudaFree(cu_bound_sorted));
@@ -1036,14 +1012,12 @@ void CuMesh::get_boundary_loops() {
     CUDA_CHECK(cub::DeviceSelect::Flagged(
         nullptr, temp_storage_bytes,
         cu_bound_conn_comp_ids_sorted, cu_bound_is_on_loop, cu_loop_bound_conn_comp_ids_sorted, cu_num_bound_on_loop,
-        B
-    ));
+        B, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceSelect::Flagged(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_bound_conn_comp_ids_sorted, cu_bound_is_on_loop, cu_loop_bound_conn_comp_ids_sorted, cu_num_bound_on_loop,
-        B
-    ));
+        B, cumesh::torch_cuda_stream()));
     CUDA_CHECK(cudaFree(cu_bound_conn_comp_ids_sorted));
     CUDA_CHECK(cudaFree(cu_bound_is_on_loop));
     CUDA_CHECK(cudaFree(cu_num_bound_on_loop));
@@ -1059,15 +1033,13 @@ void CuMesh::get_boundary_loops() {
         nullptr, temp_storage_bytes,
         cu_loop_bound_conn_comp_ids_sorted,
         cu_rle_unique_out, this->loop_boundaries_offset.ptr, cu_rle_num_runs,
-        num_bound_on_loop
-    ));
+        num_bound_on_loop, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceRunLengthEncode::Encode(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         cu_loop_bound_conn_comp_ids_sorted,
         cu_rle_unique_out, this->loop_boundaries_offset.ptr, cu_rle_num_runs,
-        num_bound_on_loop
-    ));
+        num_bound_on_loop, cumesh::torch_cuda_stream()));
     CUDA_CHECK(cudaFree(cu_loop_bound_conn_comp_ids_sorted));
     CUDA_CHECK(cudaFree(cu_rle_unique_out));
     CUDA_CHECK(cudaFree(cu_rle_num_runs));
@@ -1077,14 +1049,12 @@ void CuMesh::get_boundary_loops() {
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         this->loop_boundaries_offset.ptr,
-        this->num_bound_loops + 1
-    ));
+        this->num_bound_loops + 1, cumesh::torch_cuda_stream()));
     this->cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         this->cub_temp_storage.ptr, temp_storage_bytes,
         this->loop_boundaries_offset.ptr,
-        this->num_bound_loops + 1
-    ));
+        this->num_bound_loops + 1, cumesh::torch_cuda_stream()));
 }
 
 

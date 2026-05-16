@@ -152,7 +152,7 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
     int* num_vertices;
     CUDA_CHECK(cudaMalloc(&num_vertices, (M + 1) * sizeof(int)));
     if (hashmap_keys.dtype() == torch::kUInt32) {
-        get_vertex_num<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(
+        get_vertex_num<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             N,
             M,
             W,
@@ -164,7 +164,7 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
             num_vertices
         );
     } else if (hashmap_keys.dtype() == torch::kUInt64) {
-        get_vertex_num<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(
+        get_vertex_num<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             N,
             M,
             W,
@@ -182,10 +182,10 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
 
     // Compute the offset
     size_t temp_storage_bytes = 0;
-    cub::DeviceScan::ExclusiveSum(nullptr, temp_storage_bytes, num_vertices, M + 1);
+    cub::DeviceScan::ExclusiveSum(nullptr, temp_storage_bytes, num_vertices, M + 1, cumesh::torch_cuda_stream());
     void* d_temp_storage = nullptr;
     CUDA_CHECK(cudaMalloc(&d_temp_storage, temp_storage_bytes));
-    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, num_vertices, M + 1);
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, num_vertices, M + 1, cumesh::torch_cuda_stream());
     CUDA_CHECK(cudaFree(d_temp_storage));
     int total_vertices;
     CUDA_CHECK(cudaMemcpy(&total_vertices, num_vertices + M, sizeof(int), cudaMemcpyDeviceToHost));
@@ -193,7 +193,7 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
     // Set the active vertices for each voxel
     auto vertices = torch::empty({total_vertices, 3}, torch::dtype(torch::kInt32).device(hashmap_keys.device()));
     if (hashmap_keys.dtype() == torch::kUInt32) {
-        set_vertex<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(
+        set_vertex<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             N,
             M,
             W,
@@ -207,7 +207,7 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
         );
     }
     else if (hashmap_keys.dtype() == torch::kUInt64) {
-        set_vertex<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE>>>(
+        set_vertex<<<(M + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
             N,
             M,
             W,

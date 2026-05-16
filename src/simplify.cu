@@ -69,7 +69,7 @@ void get_qem(
     size_t V = ctx.vertices.size;
     size_t F = ctx.faces.size;
     ctx.temp_storage.resize(V * sizeof(QEM));
-    get_qem_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_qem_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.vertices.ptr,
         ctx.faces.ptr,
         ctx.vert2face.ptr,
@@ -330,7 +330,7 @@ void get_edge_collapse_cost(
     size_t F = ctx.faces.size;
     size_t E = ctx.edges.size;
     ctx.edge_collapse_costs.resize(E);
-    get_edge_collapse_cost_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_edge_collapse_cost_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.vertices.ptr,
         ctx.faces.ptr,
         ctx.vert2face.ptr,
@@ -399,7 +399,7 @@ void propagate_cost(
     size_t E = ctx.edges.size;
     ctx.propagated_costs.resize(F);
     ctx.propagated_costs.fill(std::numeric_limits<uint64_t>::max());
-    propagate_cost_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    propagate_cost_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.edges.ptr,
         ctx.vert2face.ptr,
         ctx.vert2face_offset.ptr,
@@ -548,7 +548,7 @@ void collapse_edges(
     ctx.faces_map.resize(F + 1);
     ctx.vertices_map.fill(1);
     ctx.faces_map.fill(1);
-    collapse_edges_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    collapse_edges_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.vertices.ptr,
         ctx.faces.ptr,
         ctx.edges.ptr,
@@ -569,18 +569,16 @@ void collapse_edges(
     size_t temp_storage_bytes = 0;
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
-        ctx.vertices_map.ptr, V+1
-    ));
+        ctx.vertices_map.ptr, V+1, cumesh::torch_cuda_stream()));
     ctx.cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         ctx.cub_temp_storage.ptr, temp_storage_bytes,
-        ctx.vertices_map.ptr, V+1
-    ));
+        ctx.vertices_map.ptr, V+1, cumesh::torch_cuda_stream()));
     int new_num_vertices;
     CUDA_CHECK(cudaMemcpy(&new_num_vertices, ctx.vertices_map.ptr + V, sizeof(int), cudaMemcpyDeviceToHost));
     // compress vertices
     ctx.temp_storage.resize(new_num_vertices * sizeof(float3));
-    compress_vertices_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    compress_vertices_kernel<<<(V+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.vertices_map.ptr,
         ctx.vertices.ptr,
         V,
@@ -593,18 +591,16 @@ void collapse_edges(
     // get faces map
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
-        ctx.faces_map.ptr, F+1
-    ));
+        ctx.faces_map.ptr, F+1, cumesh::torch_cuda_stream()));
     ctx.cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         ctx.cub_temp_storage.ptr, temp_storage_bytes,
-        ctx.faces_map.ptr, F+1
-    ));
+        ctx.faces_map.ptr, F+1, cumesh::torch_cuda_stream()));
     int new_num_faces;
     CUDA_CHECK(cudaMemcpy(&new_num_faces, ctx.faces_map.ptr + F, sizeof(int), cudaMemcpyDeviceToHost));
     // compress faces
     ctx.temp_storage.resize(new_num_faces * sizeof(int3));
-    compress_faces_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    compress_faces_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.faces_map.ptr,
         ctx.vertices_map.ptr,
         ctx.faces.ptr,

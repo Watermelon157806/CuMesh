@@ -189,7 +189,7 @@ std::tuple<torch::Tensor, torch::Tensor> cumesh::simple_dual_contour(
     dim3 blocks((M + BLOCK_SIZE - 1) / BLOCK_SIZE);
 
     if (hashmap_keys.dtype() == torch::kUInt32) {
-        simple_dual_contour_kernel<<<blocks, threads>>>(
+        simple_dual_contour_kernel<<<blocks, threads, 0, cumesh::torch_cuda_stream()>>>(
             N_vert,
             M,
             W, H, D,
@@ -202,7 +202,7 @@ std::tuple<torch::Tensor, torch::Tensor> cumesh::simple_dual_contour(
         );
     } 
     else if (hashmap_keys.dtype() == torch::kUInt64) {
-        simple_dual_contour_kernel<<<blocks, threads>>>(
+        simple_dual_contour_kernel<<<blocks, threads, 0, cumesh::torch_cuda_stream()>>>(
             N_vert,
             M,
             W, H, D,

@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 
 #include "api.h"
+#include "../utils.h"
 #include "hash.cuh"
 
 
@@ -34,8 +35,7 @@ static void dispatch_hashmap_insert_cuda(
 ) {
     hashmap_insert_cuda_kernel<<<
         (keys.size(0) + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        BLOCK_SIZE
-    >>>(
+        BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         hashmap_keys.size(0),
         keys.size(0),
         hashmap_keys.data_ptr<K>(),
@@ -113,8 +113,7 @@ static void dispatch_hashmap_lookup_cuda(
 ) {
     hashmap_lookup_cuda_kernel<<<
         (keys.size(0) + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        BLOCK_SIZE
-    >>>(
+        BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         hashmap_keys.size(0),
         keys.size(0),
         hashmap_keys.data_ptr<K>(),
@@ -207,8 +206,7 @@ static void dispatch_hashmap_insert_3d_cuda(
 ) {
     hashmap_insert_3d_cuda_kernel<<<
         (coords.size(0) + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        BLOCK_SIZE
-    >>>(
+        BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         hashmap_keys.size(0),
         coords.size(0),
         W, H, D,
@@ -305,8 +303,7 @@ static void dispatch_hashmap_lookup_3d_cuda(
 ) {
     hashmap_lookup_3d_cuda_kernel<<<
         (coords.size(0) + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        BLOCK_SIZE
-    >>>(
+        BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         hashmap_keys.size(0),
         coords.size(0),
         W, H, D,
@@ -397,8 +394,7 @@ static void dispatch_hashmap_insert_3d_idx_as_val_cuda(
 ) {
     hashmap_insert_3d_idx_as_val_cuda_kernel<<<
         (coords.size(0) + BLOCK_SIZE - 1) / BLOCK_SIZE,
-        BLOCK_SIZE
-    >>>(
+        BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         hashmap_keys.size(0),
         coords.size(0),
         W, H, D,

@@ -24,6 +24,10 @@ do {                                                    \
 
 namespace cumesh {
 
+inline cudaStream_t torch_cuda_stream() {
+    return at::cuda::getCurrentCUDAStream().stream();
+}
+
 inline cudaError_t torch_cudaMalloc(void** ptr, size_t bytes) {
     auto allocator = c10::cuda::CUDACachingAllocator::get();
     *ptr = allocator->raw_alloc(bytes);

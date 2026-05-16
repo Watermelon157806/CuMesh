@@ -163,28 +163,26 @@ int compress_ids(T* ids, size_t N, Buffer<char>& cub_temp_storage, T* inverse=nu
     CUDA_CHECK(torch_cudaMalloc(&cu_indices, N * sizeof(int)));
     CUDA_CHECK(torch_cudaMalloc(&cu_indices_argsorted, N * sizeof(int)));
     CUDA_CHECK(torch_cudaMalloc(&cu_ids_sorted, N * sizeof(T)));
-    arange_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(cu_indices, N);
+    arange_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(cu_indices, N);
     CUDA_CHECK(cudaGetLastError());
     size_t temp_storage_bytes = 0;
     CUDA_CHECK(cub::DeviceRadixSort::SortPairs(
         nullptr, temp_storage_bytes,
         ids, cu_ids_sorted,
         cu_indices, cu_indices_argsorted,
-        N
-    ));
+        N, 0, sizeof(*(ids)) * 8, cumesh::torch_cuda_stream()));
     cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceRadixSort::SortPairs(
         cub_temp_storage.ptr, temp_storage_bytes,
         ids, cu_ids_sorted,
         cu_indices, cu_indices_argsorted,
-        N
-    ));
+        N, 0, sizeof(*(ids)) * 8, cumesh::torch_cuda_stream()));
     CUDA_CHECK(torch_cudaFree(cu_indices));
 
     // get diff
     T* cu_new_ids;
     CUDA_CHECK(torch_cudaMalloc(&cu_new_ids, N * sizeof(T)));
-    get_diff_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    get_diff_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_ids_sorted,
         cu_new_ids,
         N
@@ -199,14 +197,12 @@ int compress_ids(T* ids, size_t N, Buffer<char>& cub_temp_storage, T* inverse=nu
         CUDA_CHECK(cub::DeviceSelect::Flagged(
             nullptr, temp_storage_bytes,
             cu_ids_sorted, cu_new_ids, inverse, cu_num,
-            N
-        ));
+            N, cumesh::torch_cuda_stream()));
         cub_temp_storage.resize(temp_storage_bytes);
         CUDA_CHECK(cub::DeviceSelect::Flagged(
             cub_temp_storage.ptr, temp_storage_bytes,
             cu_ids_sorted, cu_new_ids, inverse, cu_num,
-            N
-        ));
+            N, cumesh::torch_cuda_stream()));
         CUDA_CHECK(torch_cudaFree(cu_num));
     }
     CUDA_CHECK(torch_cudaFree(cu_ids_sorted));
@@ -216,17 +212,15 @@ int compress_ids(T* ids, size_t N, Buffer<char>& cub_temp_storage, T* inverse=nu
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         nullptr, temp_storage_bytes,
         cu_new_ids,
-        N
-    ));
+        N, cumesh::torch_cuda_stream()));
     cub_temp_storage.resize(temp_storage_bytes);
     CUDA_CHECK(cub::DeviceScan::ExclusiveSum(
         cub_temp_storage.ptr, temp_storage_bytes,
         cu_new_ids,
-        N
-    ));
+        N, cumesh::torch_cuda_stream()));
     
     // scatter
-    scatter_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE>>>(
+    scatter_kernel<<<(N+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         cu_indices_argsorted,
         cu_new_ids,
         N,
@@ -254,16 +248,14 @@ void print_max_val(T* ptr, size_t size) {
         nullptr, temp_storage_bytes,
         ptr,
         dbg_cu_max_val,
-        size
-    ));
+        size, cumesh::torch_cuda_stream()));
     char* temp_storage;
     CUDA_CHECK(torch_cudaMalloc(&temp_storage, temp_storage_bytes));
     CUDA_CHECK(cub::DeviceReduce::Max(
         temp_storage, temp_storage_bytes,
         ptr,
         dbg_cu_max_val,
-        size
-    ));
+        size, cumesh::torch_cuda_stream()));
     T h_max_val;
     CUDA_CHECK(cudaMemcpy(&h_max_val, dbg_cu_max_val, sizeof(T), cudaMemcpyDeviceToHost));
     std::cout << "Max value: " << h_max_val << std::endl;
