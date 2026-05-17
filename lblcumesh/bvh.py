@@ -13,6 +13,7 @@ class cuBVH():
         # vertices: np.ndarray, [N, 3]
         # triangles: np.ndarray, [M, 3]
 
+        self.device = vertices.device if torch.is_tensor(vertices) and vertices.is_cuda else torch.device("cuda", torch.cuda.current_device())
         if torch.is_tensor(vertices): vertices = vertices.detach().cpu().numpy()
         if torch.is_tensor(triangles): triangles = triangles.detach().cpu().numpy()
 
@@ -20,7 +21,8 @@ class cuBVH():
         assert triangles.shape[0] > 8, "BVH needs at least 8 triangles."
         
         # implementation
-        self.impl = _backend.create_cuBVH(vertices, triangles)
+        with torch.cuda.device(self.device):
+            self.impl = _backend.create_cuBVH(vertices, triangles)
 
     def ray_trace(self, rays_o, rays_d):
         # rays_o: torch.Tensor, float, [N, 3]
@@ -29,8 +31,9 @@ class cuBVH():
         rays_o = rays_o.float().contiguous()
         rays_d = rays_d.float().contiguous()
 
-        if not rays_o.is_cuda: rays_o = rays_o.cuda()
-        if not rays_d.is_cuda: rays_d = rays_d.cuda()
+        if not rays_o.is_cuda: rays_o = rays_o.to(self.device)
+        if not rays_d.is_cuda: rays_d = rays_d.to(self.device)
+        assert rays_o.device == self.device and rays_d.device == self.device
 
         prefix = rays_o.shape[:-1]
         rays_o = rays_o.view(-1, 3)
@@ -43,7 +46,8 @@ class cuBVH():
         face_id = torch.empty(N, dtype=torch.int64, device=rays_o.device)
         depth = torch.empty(N, dtype=torch.float32, device=rays_o.device)
         
-        self.impl.ray_trace(rays_o, rays_d, positions, face_id, depth) # [N, 3]
+        with torch.cuda.device(self.device):
+            self.impl.ray_trace(rays_o, rays_d, positions, face_id, depth) # [N, 3]
 
         positions = positions.view(*prefix, 3)
         face_id = face_id.view(*prefix)
@@ -56,7 +60,8 @@ class cuBVH():
 
         positions = positions.float().contiguous()
 
-        if not positions.is_cuda: positions = positions.cuda()
+        if not positions.is_cuda: positions = positions.to(self.device)
+        assert positions.device == self.device
 
         prefix = positions.shape[:-1]
         positions = positions.view(-1, 3)
@@ -72,7 +77,8 @@ class cuBVH():
         else:
             uvw = None
         
-        self.impl.unsigned_distance(positions, distances, face_id, uvw) # [N, 3]
+        with torch.cuda.device(self.device):
+            self.impl.unsigned_distance(positions, distances, face_id, uvw) # [N, 3]
 
         distances = distances.view(*prefix)
         face_id = face_id.view(*prefix)
@@ -87,7 +93,8 @@ class cuBVH():
 
         positions = positions.float().contiguous()
 
-        if not positions.is_cuda: positions = positions.cuda()
+        if not positions.is_cuda: positions = positions.to(self.device)
+        assert positions.device == self.device
 
         prefix = positions.shape[:-1]
         positions = positions.view(-1, 3)
@@ -103,7 +110,8 @@ class cuBVH():
         else:
             uvw = None
         
-        self.impl.signed_distance(positions, distances, face_id, uvw, _sdf_mode_to_id[mode]) # [N, 3]
+        with torch.cuda.device(self.device):
+            self.impl.signed_distance(positions, distances, face_id, uvw, _sdf_mode_to_id[mode]) # [N, 3]
 
         distances = distances.view(*prefix)
         face_id = face_id.view(*prefix)
