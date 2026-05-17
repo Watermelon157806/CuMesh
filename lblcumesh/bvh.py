@@ -8,14 +8,26 @@ _sdf_mode_to_id = {
     'raystab': 1,
 }
 
+def _cuda_device(*tensors):
+    devices = [tensor.device for tensor in tensors if torch.is_tensor(tensor) and tensor.is_cuda]
+    assert all(device == devices[0] for device in devices), "CUDA tensors must be on the same device"
+    return devices[0] if devices else torch.device("cuda", torch.cuda.current_device())
+
+def _to_device(tensor, device, dtype):
+    assert torch.is_tensor(tensor)
+    assert not tensor.is_cuda or tensor.device == device
+    if not tensor.is_cuda:
+        tensor = tensor.to(device)
+    return tensor.to(dtype=dtype).contiguous()
+
 class cuBVH():
     def __init__(self, vertices, triangles):
         # vertices: np.ndarray, [N, 3]
         # triangles: np.ndarray, [M, 3]
 
-        self.device = vertices.device if torch.is_tensor(vertices) and vertices.is_cuda else torch.device("cuda", torch.cuda.current_device())
-        if torch.is_tensor(vertices): vertices = vertices.detach().cpu().numpy()
-        if torch.is_tensor(triangles): triangles = triangles.detach().cpu().numpy()
+        self.device = _cuda_device(vertices, triangles)
+        if torch.is_tensor(vertices): vertices = vertices.cpu().numpy()
+        if torch.is_tensor(triangles): triangles = triangles.cpu().numpy()
 
         # check inputs
         assert triangles.shape[0] > 8, "BVH needs at least 8 triangles."
@@ -28,12 +40,8 @@ class cuBVH():
         # rays_o: torch.Tensor, float, [N, 3]
         # rays_d: torch.Tensor, float, [N, 3]
 
-        rays_o = rays_o.float().contiguous()
-        rays_d = rays_d.float().contiguous()
-
-        if not rays_o.is_cuda: rays_o = rays_o.to(self.device)
-        if not rays_d.is_cuda: rays_d = rays_d.to(self.device)
-        assert rays_o.device == self.device and rays_d.device == self.device
+        rays_o = _to_device(rays_o, self.device, torch.float32)
+        rays_d = _to_device(rays_d, self.device, torch.float32)
 
         prefix = rays_o.shape[:-1]
         rays_o = rays_o.view(-1, 3)
@@ -58,10 +66,7 @@ class cuBVH():
     def unsigned_distance(self, positions, return_uvw=False):
         # positions: torch.Tensor, float, [N, 3]
 
-        positions = positions.float().contiguous()
-
-        if not positions.is_cuda: positions = positions.to(self.device)
-        assert positions.device == self.device
+        positions = _to_device(positions, self.device, torch.float32)
 
         prefix = positions.shape[:-1]
         positions = positions.view(-1, 3)
@@ -91,10 +96,7 @@ class cuBVH():
     def signed_distance(self, positions, return_uvw=False, mode='watertight'):
         # positions: torch.Tensor, float, [N, 3]
 
-        positions = positions.float().contiguous()
-
-        if not positions.is_cuda: positions = positions.to(self.device)
-        assert positions.device == self.device
+        positions = _to_device(positions, self.device, torch.float32)
 
         prefix = positions.shape[:-1]
         positions = positions.view(-1, 3)
