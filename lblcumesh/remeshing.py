@@ -93,7 +93,7 @@ def remesh_narrow_band_dc(
     if bvh is None:
         if verbose:
             print("Building BVH...")
-        bvh = cuBVH(vertices, faces)
+        bvh = cuBVH(vertices, faces, device=device)
     
     # Epsilon for band thickening: surfaces are at distance 'eps'
     # Effectively we compute the isosurface of (UDF - eps) = 0

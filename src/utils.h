@@ -8,6 +8,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/ThrustAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 
 #define CUDA_CHECK(call)                                \
 do {                                                    \
@@ -68,6 +69,7 @@ inline cudaError_t torch_cudaStreamSynchronize() {
 }
 
 inline cudaError_t torch_cudaMalloc(void** ptr, size_t bytes) {
+    c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, at::cuda::current_device()));
     auto allocator = c10::cuda::CUDACachingAllocator::get();
     *ptr = allocator->raw_alloc(bytes);
     return cudaSuccess;
@@ -83,6 +85,9 @@ inline cudaError_t torch_cudaFree(T* ptr) {
     if (ptr == nullptr) {
         return cudaSuccess;
     }
+    cudaPointerAttributes attributes;
+    CUDA_CHECK(cudaPointerGetAttributes(&attributes, ptr));
+    c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, attributes.device));
     auto allocator = c10::cuda::CUDACachingAllocator::get();
     allocator->raw_delete(ptr);
     return cudaSuccess;
