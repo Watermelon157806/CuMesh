@@ -26,7 +26,13 @@ static __global__ void copy_T_to_T3_kernel(
 
 
 void CuMesh::remove_faces(torch::Tensor& face_mask) {
+    auto device_guard = guard_device();
+    TORCH_CHECK(face_mask.is_cuda(), "face_mask must be CUDA");
+    TORCH_CHECK(face_mask.device().index() == device_index, "face_mask must be on the same CUDA device as CuMesh");
+    TORCH_CHECK(face_mask.dtype() == torch::kBool, "face_mask must be bool");
+    TORCH_CHECK(face_mask.is_contiguous(), "face_mask must be contiguous");
     size_t F = this->faces.size;
+    TORCH_CHECK(face_mask.size(0) == static_cast<int64_t>(F), "face_mask must have shape [F]");
 
     size_t temp_storage_bytes = 0;
     int *cu_new_num_faces;

@@ -146,6 +146,7 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
     const int H,
     const int D
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_vals.device() == hashmap_keys.device(), "hashmap_vals must be on the same device as hashmap_keys");
     TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
     c10::cuda::CUDAGuard device_guard(hashmap_keys.device());

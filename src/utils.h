@@ -7,6 +7,7 @@
 #include <torch/torch.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/ThrustAllocator.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #define CUDA_CHECK(call)                                \
 do {                                                    \
@@ -79,6 +80,9 @@ inline cudaError_t torch_cudaMalloc(T** ptr, size_t bytes) {
 
 template <typename T>
 inline cudaError_t torch_cudaFree(T* ptr) {
+    if (ptr == nullptr) {
+        return cudaSuccess;
+    }
     auto allocator = c10::cuda::CUDACachingAllocator::get();
     allocator->raw_delete(ptr);
     return cudaSuccess;
@@ -93,23 +97,35 @@ struct Buffer {
     T* ptr;
     size_t size;
     size_t capacity;
+    int device_index;
 
-    Buffer() : ptr(nullptr), size(0), capacity(0) {}
+    Buffer() : ptr(nullptr), size(0), capacity(0), device_index(-1) {}
 
     bool is_empty() const {
         return size == 0;
     }
 
     void init(size_t capacity) {
+        device_index = at::cuda::current_device();
+        c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, device_index));
         this->capacity = capacity;
+        if (capacity == 0) {
+            ptr = nullptr;
+            return;
+        }
         CUDA_CHECK(torch_cudaMalloc(&ptr, capacity * sizeof(T)));
     }
 
     void free() {
-        if (ptr != nullptr) CUDA_CHECK(torch_cudaFree(ptr));
+        if (ptr != nullptr) {
+            TORCH_CHECK(device_index >= 0, "Buffer has a CUDA pointer but no owning device");
+            c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, device_index));
+            CUDA_CHECK(torch_cudaFree(ptr));
+        }
         ptr = nullptr;
         size = 0;
         capacity = 0;
+        device_index = -1;
     }
 
     void resize(size_t size) {
@@ -123,21 +139,38 @@ struct Buffer {
     void extend(size_t size) {
         size_t new_size = size + this->size;
         if (new_size > capacity) {
+            const int target_device = device_index >= 0 ? device_index : at::cuda::current_device();
+            c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, target_device));
             T* new_ptr;
             CUDA_CHECK(torch_cudaMalloc(&new_ptr, new_size * sizeof(T)));
-            CUDA_CHECK(torch_cudaMemcpy(new_ptr, ptr, this->size * sizeof(T), cudaMemcpyDeviceToDevice));
-            CUDA_CHECK(torch_cudaFree(ptr));
+            if (this->size > 0) {
+                CUDA_CHECK(torch_cudaMemcpy(new_ptr, ptr, this->size * sizeof(T), cudaMemcpyDeviceToDevice));
+            }
+            if (ptr != nullptr) {
+                CUDA_CHECK(torch_cudaFree(ptr));
+            }
             ptr = new_ptr;
             this->capacity = new_size;
+            device_index = target_device;
         }
         this->size = new_size;
     }
 
     void zero() {
+        if (size == 0) {
+            return;
+        }
+        TORCH_CHECK(device_index >= 0, "Buffer has data but no owning device");
+        c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, device_index));
         CUDA_CHECK(torch_cudaMemset(ptr, 0, size * sizeof(T)));
     }
 
     void fill(T val) {
+        if (size == 0) {
+            return;
+        }
+        TORCH_CHECK(device_index >= 0, "Buffer has data but no owning device");
+        c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, device_index));
         std::vector<T> tmp(size, val);
         CUDA_CHECK(torch_cudaMemcpy(ptr, tmp.data(), size * sizeof(T), cudaMemcpyHostToDevice));
     }
@@ -162,6 +195,7 @@ void swap_buffers(Buffer<T1>& b1, Buffer<T2>& b2) {
     b2.capacity = b1_capacity_bytes / sizeof(T2);
     b1.size = b2_size_bytes / sizeof(T1);
     b2.size = b1_size_bytes / sizeof(T2);
+    std::swap(b1.device_index, b2.device_index);
 }
 
 

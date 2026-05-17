@@ -180,6 +180,7 @@ std::tuple<torch::Tensor, torch::Tensor> cumesh::simple_dual_contour(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_vals.device() == hashmap_keys.device(), "hashmap_vals must be on the same device as hashmap_keys");
     TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
     TORCH_CHECK(udf.device() == hashmap_keys.device(), "udf must be on the same device as hashmap_keys");

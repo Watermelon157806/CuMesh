@@ -61,6 +61,7 @@ void cumesh::hashmap_insert_cuda(
     const torch::Tensor& keys,
     const torch::Tensor& values
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
     TORCH_CHECK(keys.device() == hashmap_keys.device(), "keys must be on the same device as hashmap_keys");
     TORCH_CHECK(values.device() == hashmap_keys.device(), "values must be on the same device as hashmap_keys");
@@ -142,6 +143,7 @@ torch::Tensor cumesh::hashmap_lookup_cuda(
     const torch::Tensor& hashmap_values,
     const torch::Tensor& keys
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
     TORCH_CHECK(keys.device() == hashmap_keys.device(), "keys must be on the same device as hashmap_keys");
     c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
@@ -246,6 +248,7 @@ void cumesh::hashmap_insert_3d_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
     TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
     TORCH_CHECK(values.device() == hashmap_keys.device(), "values must be on the same device as hashmap_keys");
@@ -347,6 +350,7 @@ torch::Tensor cumesh::hashmap_lookup_3d_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
     TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
     c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
@@ -438,6 +442,7 @@ void cumesh::hashmap_insert_3d_idx_as_val_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_keys.is_cuda(), "hashmap_keys must be CUDA");
     TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
     TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
     c10::cuda::CUDAGuard device_guard(hashmap_keys.device());

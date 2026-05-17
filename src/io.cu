@@ -77,6 +77,9 @@ static torch::Tensor buffer_to_tensor(const Buffer<T> buffer) {
     using Mapping = TorchTypeMapping<T>;
 
     int64_t count = static_cast<int64_t>(buffer.size);
+    TORCH_CHECK(count == 0 || buffer.device_index >= 0, "Buffer has data but no owning device");
+    const int device_index = buffer.device_index >= 0 ? buffer.device_index : at::cuda::current_device();
+    c10::cuda::CUDAGuard device_guard(c10::Device(c10::kCUDA, device_index));
     std::vector<int64_t> shape;
     if (Mapping::channels == 1) {
         shape = {count}; // 1D Tensor
@@ -84,7 +87,7 @@ static torch::Tensor buffer_to_tensor(const Buffer<T> buffer) {
         shape = {count, Mapping::channels}; // 2D Tensor [N, C]
     }
 
-    auto options = torch::dtype(Mapping::scalar_type).device(torch::kCUDA);
+    auto options = torch::dtype(Mapping::scalar_type).device(c10::Device(c10::kCUDA, device_index));
     auto tensor = torch::empty(shape, options);
 
     static constexpr int dst_bytes = Mapping::sizeof_scalar * Mapping::channels;
@@ -112,6 +115,22 @@ static torch::Tensor buffer_to_tensor(const Buffer<T> buffer) {
 
 
 void CuMesh::init(const torch::Tensor& vertices, const torch::Tensor& faces) {
+    TORCH_CHECK(vertices.is_cuda(), "vertices must be CUDA");
+    TORCH_CHECK(faces.is_cuda(), "faces must be CUDA");
+    TORCH_CHECK(faces.device() == vertices.device(), "faces must be on the same CUDA device as vertices");
+    TORCH_CHECK(vertices.dtype() == torch::kFloat32, "vertices must be float32");
+    TORCH_CHECK(faces.dtype() == torch::kInt32, "faces must be int32");
+    TORCH_CHECK(vertices.is_contiguous(), "vertices must be contiguous");
+    TORCH_CHECK(faces.is_contiguous(), "faces must be contiguous");
+    TORCH_CHECK(vertices.dim() == 2 && vertices.size(1) == 3, "vertices must have shape [V,3]");
+    TORCH_CHECK(faces.dim() == 2 && faces.size(1) == 3, "faces must have shape [F,3]");
+    if (device_index >= 0 && device_index != vertices.get_device()) {
+        clear_cache();
+        this->vertices.free();
+        this->faces.free();
+    }
+    device_index = vertices.get_device();
+    c10::cuda::CUDAGuard device_guard(vertices.device());
     size_t num_vertices = vertices.size(0);
     size_t num_faces = faces.size(0);
     this->vertices.resize(num_vertices);

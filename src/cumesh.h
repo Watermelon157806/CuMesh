@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <torch/extension.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #include "utils.h"
 
@@ -79,6 +80,7 @@ public:
     // Temporary storage
     Buffer<char> temp_storage;
     Buffer<char> cub_temp_storage;
+    int device_index = -1;
 
     CuMesh();
 
@@ -107,6 +109,8 @@ public:
      * @param faces The triangle faces as an [F, 3] tensor.
      */
     void init(const torch::Tensor& vertices, const torch::Tensor& faces);
+
+    c10::cuda::CUDAGuard guard_device() const;
 
     /**
      * Get the mesh.

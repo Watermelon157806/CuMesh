@@ -6,6 +6,10 @@ namespace cumesh {
 CuMesh::CuMesh() {}
 
 CuMesh::~CuMesh() {
+    c10::cuda::OptionalCUDAGuard device_guard;
+    if (device_index >= 0) {
+        device_guard.set_device(c10::Device(c10::kCUDA, device_index));
+    }
     vertices.free();
     faces.free();
     face_areas.free();
@@ -59,6 +63,11 @@ CuMesh::~CuMesh() {
     cub_temp_storage.free();
 }
 
+c10::cuda::CUDAGuard CuMesh::guard_device() const {
+    TORCH_CHECK(device_index >= 0, "CuMesh must be initialized before CUDA operations");
+    return c10::cuda::CUDAGuard(c10::Device(c10::kCUDA, device_index));
+}
+
 int CuMesh::num_vertices() const {
     return vertices.size;
 }
@@ -88,6 +97,7 @@ int CuMesh::num_boundary_loops() const {
 }
 
 void CuMesh::clear_cache() {
+    auto device_guard = guard_device();
     face_areas.free();
     face_normals.free();
     vertex_normals.free();
