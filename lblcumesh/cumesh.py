@@ -9,6 +9,12 @@ from . import _C
 class CuMesh:
     def __init__(self):
         self.cu_mesh = _C.CuMesh()
+        self.device = None
+
+    def _run_on_mesh_device(self, fn, *args, **kwargs):
+        assert self.device is not None, "CuMesh must be initialized before CUDA operations"
+        with torch.cuda.device(self.device):
+            return fn(*args, **kwargs)
 
     def init(self, vertices: torch.Tensor, faces: torch.Tensor):
         """
@@ -22,7 +28,9 @@ class CuMesh:
         assert faces.ndim == 2 and faces.shape[1] == 3, "Input faces must be of shape [F, 3]"
         assert vertices.is_contiguous() and faces.is_contiguous(), "Input tensors must be contiguous"
         assert vertices.is_cuda and faces.is_cuda and vertices.device == faces.device, "Input tensors must both be on the same CUDA device"
-        self.cu_mesh.init(vertices, faces)
+        self.device = vertices.device
+        with torch.cuda.device(self.device):
+            self.cu_mesh.init(vertices, faces)
         
     @property
     def num_vertices(self) -> int:
@@ -56,7 +64,7 @@ class CuMesh:
         """
         Clear the cached data.
         """
-        self.cu_mesh.clear_cache()
+        self._run_on_mesh_device(self.cu_mesh.clear_cache)
 
     def read(self) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -65,7 +73,7 @@ class CuMesh:
         Returns:
             A tuple of two tensors: the vertex positions and the face indices.
         """
-        return self.cu_mesh.read()
+        return self._run_on_mesh_device(self.cu_mesh.read)
     
     def read_face_normals(self) -> torch.Tensor:
         """
@@ -74,7 +82,7 @@ class CuMesh:
         Returns:
             The face normals as an [F, 3] tensor.
         """
-        return self.cu_mesh.read_face_normals()
+        return self._run_on_mesh_device(self.cu_mesh.read_face_normals)
     
     def read_vertex_normals(self) -> torch.Tensor:
         """
@@ -83,7 +91,7 @@ class CuMesh:
         Returns:
             The vertex normals as an [V, 3] tensor.
         """
-        return self.cu_mesh.read_vertex_normals()
+        return self._run_on_mesh_device(self.cu_mesh.read_vertex_normals)
     
     def read_edges(self) -> torch.Tensor:
         """
@@ -92,7 +100,7 @@ class CuMesh:
         Returns:
             A tensor of shape [E, 2] containing the edge indices.
         """
-        return self.cu_mesh.read_edges()
+        return self._run_on_mesh_device(self.cu_mesh.read_edges)
     
     def read_boundaries(self) -> torch.Tensor:
         """
@@ -101,7 +109,7 @@ class CuMesh:
         Returns:
             A tensor of shape [B] containing the boundary edge indices.
         """
-        return self.cu_mesh.read_boundaries()
+        return self._run_on_mesh_device(self.cu_mesh.read_boundaries)
     
     
     def read_manifold_face_adjacency(self) -> torch.Tensor:
@@ -111,7 +119,7 @@ class CuMesh:
         Returns:
             A tensor of shape [M, 2] containing the manifold face adjacency.
         """
-        return self.cu_mesh.read_manifold_face_adjacency()
+        return self._run_on_mesh_device(self.cu_mesh.read_manifold_face_adjacency)
     
     def read_manifold_boundary_adjacency(self) -> torch.Tensor:
         """
@@ -120,7 +128,7 @@ class CuMesh:
         Returns:
             A tensor of shape [M, 2] containing the manifold boundary adjacency.
         """
-        return self.cu_mesh.read_manifold_boundary_adjacency()
+        return self._run_on_mesh_device(self.cu_mesh.read_manifold_boundary_adjacency)
     
     def read_connected_components(self) -> Tuple[int, torch.Tensor]:
         """
@@ -131,7 +139,7 @@ class CuMesh:
                 - the number of connected components
                 - a tensor of shape [F] containing the connected component ID for each face.
         """
-        return self.cu_mesh.read_connected_components()
+        return self._run_on_mesh_device(self.cu_mesh.read_connected_components)
     
     def read_boundary_connected_components(self) -> Tuple[int, torch.Tensor]:
         """
@@ -142,7 +150,7 @@ class CuMesh:
                 - the number of connected components
                 - a tensor of shape [E] containing the connected component ID for each boundary edge.
         """
-        return self.cu_mesh.read_boundary_connected_components()
+        return self._run_on_mesh_device(self.cu_mesh.read_boundary_connected_components)
     
     def read_boundary_loops(self) -> Tuple[int, torch.Tensor, torch.Tensor]:
         """
@@ -154,7 +162,7 @@ class CuMesh:
                 - a tensor of shape [L] containing the indices of the boundary edges in each loop.
                 - a tensor of shape [N_loops + 1] containing the offsets of the boundary edges in each loop.
         """
-        return self.cu_mesh.read_boundary_loops()
+        return self._run_on_mesh_device(self.cu_mesh.read_boundary_loops)
     
     def read_all_cache(self) -> Dict[str, torch.Tensor]:
         """
@@ -163,85 +171,85 @@ class CuMesh:
         Returns:
             A dictionary of cached data.
         """
-        return self.cu_mesh.read_all_cache()
+        return self._run_on_mesh_device(self.cu_mesh.read_all_cache)
     
     def compute_face_normals(self):
         """
         Compute the normals of the faces.
         """
-        self.cu_mesh.compute_face_normals()
+        self._run_on_mesh_device(self.cu_mesh.compute_face_normals)
     
     def compute_vertex_normals(self):
         """
         Compute the normals of the vertices.
         """
-        self.cu_mesh.compute_vertex_normals()
+        self._run_on_mesh_device(self.cu_mesh.compute_vertex_normals)
         
     def get_vertex_face_adjacency(self):
         """
         Compute the vertex to face adjacency.
         """
-        self.cu_mesh.get_vertex_face_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_vertex_face_adjacency)
         
     def get_edges(self):
         """
         Compute the edges of the mesh.
         """
-        self.cu_mesh.get_edges()
+        self._run_on_mesh_device(self.cu_mesh.get_edges)
         
     def get_edge_face_adjacency(self):
         """
         Compute the edge to face adjacency.
         """
-        self.cu_mesh.get_edge_face_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_edge_face_adjacency)
         
     def get_vertex_edge_adjacency(self):
         """
         Compute the vertex to edge adjacency.
         """
-        self.cu_mesh.get_vertex_edge_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_vertex_edge_adjacency)
         
     def get_boundary_info(self):
         """
         Compute the boundary information of the mesh.
         """
-        self.cu_mesh.get_boundary_info()
+        self._run_on_mesh_device(self.cu_mesh.get_boundary_info)
         
     def get_vertex_boundary_adjacency(self):
         """
         Compute the vertex to boundary adjacency.
         """
-        self.cu_mesh.get_vertex_boundary_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_vertex_boundary_adjacency)
         
     def get_manifold_face_adjacency(self):
         """
         Compute the manifold face adjacency.
         """
-        self.cu_mesh.get_manifold_face_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_manifold_face_adjacency)
         
     def get_manifold_boundary_adjacency(self):
         """
         Compute the manifold boundary adjacency.
         """
-        self.cu_mesh.get_manifold_boundary_adjacency()
+        self._run_on_mesh_device(self.cu_mesh.get_manifold_boundary_adjacency)
         
     def get_connected_components(self):
         """
         Compute the connected components of the mesh.
         """
-        self.cu_mesh.get_connected_components()
+        self._run_on_mesh_device(self.cu_mesh.get_connected_components)
         
     def get_boundary_connected_components(self):
         """
         Compute the connected components of the boundary of the mesh.
         """
-        self.cu_mesh.get_boundary_connected_components()
+        self._run_on_mesh_device(self.cu_mesh.get_boundary_connected_components)
         
     def get_boundary_loops(self):
         """
         Compute the boundary loops of the mesh.
         """
-        self.cu_mesh.get_boundary_loops()
+        self._run_on_mesh_device(self.cu_mesh.get_boundary_loops)
         
     def remove_faces(self, face_mask: torch.Tensor):
         """
@@ -252,20 +260,21 @@ class CuMesh:
         """
         assert face_mask.ndim == 1 and face_mask.shape[0] == self.num_faces, "face_mask must be a boolean tensor of shape [F]"
         assert face_mask.is_contiguous() and face_mask.is_cuda, "face_mask must be a CUDA tensor"
+        assert face_mask.device == self.device, "face_mask must be on the same CUDA device as the mesh"
         assert face_mask.dtype == torch.bool, "face_mask must be a boolean tensor"
-        self.cu_mesh.remove_faces(face_mask)
+        self._run_on_mesh_device(self.cu_mesh.remove_faces, face_mask)
     
     def remove_unreferenced_vertices(self):
         """
         Remove unreferenced vertices from the mesh.
         """
-        self.cu_mesh.remove_unreferenced_vertices()
+        self._run_on_mesh_device(self.cu_mesh.remove_unreferenced_vertices)
         
     def remove_duplicate_faces(self):
         """
         Remove duplicate faces from the mesh.
         """
-        self.cu_mesh.remove_duplicate_faces()
+        self._run_on_mesh_device(self.cu_mesh.remove_duplicate_faces)
         
     def remove_degenerate_faces(self, abs_thresh: float=1e-24, rel_thresh: float=1e-12):
         """
@@ -276,7 +285,7 @@ class CuMesh:
             rel_thresh: relative area to square of the longest edge threshold below which a face is considered degenerate.
                 Note that a face is considered degenerate if both the absolute and relative conditions are met.
         """
-        self.cu_mesh.remove_degenerate_faces(abs_thresh, rel_thresh)
+        self._run_on_mesh_device(self.cu_mesh.remove_degenerate_faces, abs_thresh, rel_thresh)
         
     def fill_holes(self, max_hole_perimeter: float=3e-2):
         """
@@ -285,14 +294,14 @@ class CuMesh:
         Args:
             max_hole_perimeter: the maximum perimeter of a hole to fill.
         """
-        self.cu_mesh.fill_holes(max_hole_perimeter)
+        self._run_on_mesh_device(self.cu_mesh.fill_holes, max_hole_perimeter)
         
     def repair_non_manifold_edges(self):
         """
         Repair Non-manifold edges by splitting vertices.
         This creates duplicate vertices with the same coordinates.
         """
-        self.cu_mesh.repair_non_manifold_edges()
+        self._run_on_mesh_device(self.cu_mesh.repair_non_manifold_edges)
 
     def remove_non_manifold_faces(self):
         """
@@ -300,7 +309,7 @@ class CuMesh:
         For each non-manifold edge (shared by >2 faces), only keep the first 2 faces.
         This repairs non-manifold edges by deleting faces instead of splitting vertices.
         """
-        self.cu_mesh.remove_non_manifold_faces()
+        self._run_on_mesh_device(self.cu_mesh.remove_non_manifold_faces)
         
     def remove_small_connected_components(self, min_area: float):
         """
@@ -309,13 +318,13 @@ class CuMesh:
         Args:
             min_area: the minimum area of a connected component to keep.
         """
-        self.cu_mesh.remove_small_connected_components(min_area)
+        self._run_on_mesh_device(self.cu_mesh.remove_small_connected_components, min_area)
         
     def unify_face_orientations(self):
         """
         Unify the orientations of the faces.
         """
-        self.cu_mesh.unify_face_orientations()
+        self._run_on_mesh_device(self.cu_mesh.unify_face_orientations)
     
     def simplify(self, target_num_faces: int, verbose: bool=False, options: dict={}, max_iterations: int=1000):
         """
@@ -342,7 +351,7 @@ class CuMesh:
             if verbose:
                 pbar.set_description(f"Simplifying [thres={thresh:.2e}]")
             
-            new_num_vert, new_num_face = self.cu_mesh.simplify_step(lambda_edge_length, lambda_skinny, thresh, False)
+            new_num_vert, new_num_face = self._run_on_mesh_device(self.cu_mesh.simplify_step, lambda_edge_length, lambda_skinny, thresh, False)
             
             if verbose:
                 pbar.update(num_face - max(target_num_faces, new_num_face))
@@ -381,7 +390,8 @@ class CuMesh:
                                          Cost += (Perimeter / Area) * weight.
                                          Higher values penalize long strips and encourage circular/compact shapes.
         """
-        self.cu_mesh.compute_charts(
+        self._run_on_mesh_device(
+            self.cu_mesh.compute_charts,
             threshold_cone_half_angle_rad,
             refine_iterations,
             global_iterations,
@@ -403,7 +413,7 @@ class CuMesh:
                 - a tensor of shape [C+1] containing the offsets of the chart vertices in the vertices tensor.
                 - a tensor of shape [C+1] containing the offsets of the chart faces in the faces tensor.
         """
-        return self.cu_mesh.read_atlas_charts()
+        return self._run_on_mesh_device(self.cu_mesh.read_atlas_charts)
     
     def uv_unwrap(
         self,
@@ -472,10 +482,9 @@ class CuMesh:
         vertices = new_vertices.cpu()[vmaps]
         faces = torch.cat(faces, dim=0)
         uvs = torch.cat(uvs, dim=0)
-        
+
         out = [vertices, faces, uvs]
         if return_vmaps:
             out.append(vmaps)
-        
+
         return tuple(out)
-            

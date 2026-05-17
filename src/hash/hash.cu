@@ -1,6 +1,7 @@
 #include <torch/extension.h>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDAGuard.h>
 
 #include "api.h"
 #include "../utils.h"
@@ -60,6 +61,10 @@ void cumesh::hashmap_insert_cuda(
     const torch::Tensor& keys,
     const torch::Tensor& values
 ) {
+    TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
+    TORCH_CHECK(keys.device() == hashmap_keys.device(), "keys must be on the same device as hashmap_keys");
+    TORCH_CHECK(values.device() == hashmap_keys.device(), "values must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     // Dispatch to 32-bit or 64-bit kernel
     if (hashmap_keys.dtype() == torch::kUInt32 && hashmap_values.dtype() == torch::kUInt32) {
         TORCH_CHECK(keys.dtype() == torch::kUInt32, "Keys must be uint32");
@@ -137,6 +142,9 @@ torch::Tensor cumesh::hashmap_lookup_cuda(
     const torch::Tensor& hashmap_values,
     const torch::Tensor& keys
 ) {
+    TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
+    TORCH_CHECK(keys.device() == hashmap_keys.device(), "keys must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     // Allocate output tensor
     auto output = torch::empty({keys.size(0)}, torch::dtype(hashmap_values.dtype()).device(hashmap_values.device()));
 
@@ -238,6 +246,10 @@ void cumesh::hashmap_insert_3d_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
+    TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
+    TORCH_CHECK(values.device() == hashmap_keys.device(), "values must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     TORCH_CHECK(coords.dtype() == torch::kInt32, "Coords must be int32");
 
     // Dispatch to 32-bit or 64-bit kernel
@@ -335,6 +347,9 @@ torch::Tensor cumesh::hashmap_lookup_3d_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
+    TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     // Allocate output tensor
     auto output = torch::empty({coords.size(0)}, torch::dtype(hashmap_values.dtype()).device(hashmap_values.device()));
 
@@ -423,6 +438,9 @@ void cumesh::hashmap_insert_3d_idx_as_val_cuda(
     int H,
     int D
 ) {
+    TORCH_CHECK(hashmap_values.device() == hashmap_keys.device(), "hashmap_values must be on the same device as hashmap_keys");
+    TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     // Dispatch to 32-bit or 64-bit kernel
     if (hashmap_keys.dtype() == torch::kUInt32 && hashmap_values.dtype() == torch::kUInt32) {
         dispatch_hashmap_insert_3d_idx_as_val_cuda<uint32_t, uint32_t>(hashmap_keys, hashmap_values, coords, W, H, D);

@@ -2,6 +2,10 @@
 #include "dtypes.cuh"
 #include <cub/cub.cuh>
 
+#define cudaMemcpy torch_cudaMemcpy
+#define cudaMemcpy2D torch_cudaMemcpy2D
+#define cudaMemset torch_cudaMemset
+#define cudaDeviceSynchronize torch_cudaStreamSynchronize
 
 namespace cumesh {
 
@@ -618,7 +622,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     if (timing) start = std::chrono::high_resolution_clock::now();
     this->get_vertex_face_adjacency();
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "get_vertex_face_adjacency: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }
@@ -627,7 +631,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     this->get_edges();
     this->get_boundary_info();
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "get_edges: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }
@@ -635,7 +639,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     if (timing) start = std::chrono::high_resolution_clock::now();
     get_qem(*this);
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "get_qem: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }
@@ -643,7 +647,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     if (timing) start = std::chrono::high_resolution_clock::now();
     get_edge_collapse_cost(*this, lambda_edge_length, lambda_skinny);
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "get_edge_collapse_cost: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }
@@ -651,7 +655,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     if (timing) start = std::chrono::high_resolution_clock::now();
     propagate_cost(*this);
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "propagate_cost: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }
@@ -659,7 +663,7 @@ std::tuple<int, int> CuMesh::simplify_step(float lambda_edge_length, float lambd
     if (timing) start = std::chrono::high_resolution_clock::now();
     collapse_edges(*this, threshold);
     if (timing) {
-        CUDA_CHECK(cudaDeviceSynchronize());
+        CUDA_CHECK(torch_cudaStreamSynchronize());
         end = std::chrono::high_resolution_clock::now();
         std::cout << "collapse_edges: " << std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() << " us" << std::endl;
     }

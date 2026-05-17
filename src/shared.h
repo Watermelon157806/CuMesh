@@ -9,6 +9,11 @@
 
 namespace cumesh {
 
+#define cudaMemcpy torch_cudaMemcpy
+#define cudaMemcpy2D torch_cudaMemcpy2D
+#define cudaMemset torch_cudaMemset
+#define cudaDeviceSynchronize torch_cudaStreamSynchronize
+
 
 template<typename T>
 __global__ void arange_kernel(T* array, int N, int stride=1) {

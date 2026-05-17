@@ -2,6 +2,7 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <cub/cub.cuh>
+#include <c10/cuda/CUDAGuard.h>
 
 #include "api.h"
 #include "../utils.h"
@@ -10,6 +11,10 @@
 
 #define cudaMalloc torch_cudaMalloc
 #define cudaFree torch_cudaFree
+#define cudaMemcpy torch_cudaMemcpy
+#define cudaMemcpy2D torch_cudaMemcpy2D
+#define cudaMemset torch_cudaMemset
+#define cudaDeviceSynchronize torch_cudaStreamSynchronize
 
 template<typename T>
 static __global__ void get_vertex_num(
@@ -141,6 +146,9 @@ torch::Tensor cumesh::get_sparse_voxel_grid_active_vertices(
     const int H,
     const int D
 ) {
+    TORCH_CHECK(hashmap_vals.device() == hashmap_keys.device(), "hashmap_vals must be on the same device as hashmap_keys");
+    TORCH_CHECK(coords.device() == hashmap_keys.device(), "coords must be on the same device as hashmap_keys");
+    c10::cuda::CUDAGuard device_guard(hashmap_keys.device());
     // Handle empty input - return early to avoid launching kernels with 0 blocks
     size_t M = coords.size(0);
     if (M == 0) {

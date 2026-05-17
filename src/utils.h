@@ -28,6 +28,44 @@ inline cudaStream_t torch_cuda_stream() {
     return at::cuda::getCurrentCUDAStream().stream();
 }
 
+inline bool cuda_copy_touches_host(cudaMemcpyKind kind) {
+    return kind != cudaMemcpyDeviceToDevice;
+}
+
+inline cudaError_t torch_cudaMemcpy(void* dst, const void* src, size_t count, cudaMemcpyKind kind) {
+    auto stream = torch_cuda_stream();
+    cudaError_t result = cudaMemcpyAsync(dst, src, count, kind, stream);
+    if (result != cudaSuccess) {
+        return result;
+    }
+    return cuda_copy_touches_host(kind) ? cudaStreamSynchronize(stream) : cudaSuccess;
+}
+
+inline cudaError_t torch_cudaMemcpy2D(
+    void* dst,
+    size_t dpitch,
+    const void* src,
+    size_t spitch,
+    size_t width,
+    size_t height,
+    cudaMemcpyKind kind
+) {
+    auto stream = torch_cuda_stream();
+    cudaError_t result = cudaMemcpy2DAsync(dst, dpitch, src, spitch, width, height, kind, stream);
+    if (result != cudaSuccess) {
+        return result;
+    }
+    return cuda_copy_touches_host(kind) ? cudaStreamSynchronize(stream) : cudaSuccess;
+}
+
+inline cudaError_t torch_cudaMemset(void* ptr, int value, size_t count) {
+    return cudaMemsetAsync(ptr, value, count, torch_cuda_stream());
+}
+
+inline cudaError_t torch_cudaStreamSynchronize() {
+    return cudaStreamSynchronize(torch_cuda_stream());
+}
+
 inline cudaError_t torch_cudaMalloc(void** ptr, size_t bytes) {
     auto allocator = c10::cuda::CUDACachingAllocator::get();
     *ptr = allocator->raw_alloc(bytes);
@@ -87,7 +125,7 @@ struct Buffer {
         if (new_size > capacity) {
             T* new_ptr;
             CUDA_CHECK(torch_cudaMalloc(&new_ptr, new_size * sizeof(T)));
-            CUDA_CHECK(cudaMemcpy(new_ptr, ptr, this->size * sizeof(T), cudaMemcpyDeviceToDevice));
+            CUDA_CHECK(torch_cudaMemcpy(new_ptr, ptr, this->size * sizeof(T), cudaMemcpyDeviceToDevice));
             CUDA_CHECK(torch_cudaFree(ptr));
             ptr = new_ptr;
             this->capacity = new_size;
@@ -96,12 +134,12 @@ struct Buffer {
     }
 
     void zero() {
-        CUDA_CHECK(cudaMemset(ptr, 0, size * sizeof(T)));
+        CUDA_CHECK(torch_cudaMemset(ptr, 0, size * sizeof(T)));
     }
 
     void fill(T val) {
         std::vector<T> tmp(size, val);
-        CUDA_CHECK(cudaMemcpy(ptr, tmp.data(), size * sizeof(T), cudaMemcpyHostToDevice));
+        CUDA_CHECK(torch_cudaMemcpy(ptr, tmp.data(), size * sizeof(T), cudaMemcpyHostToDevice));
     }
 };
 

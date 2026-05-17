@@ -5,6 +5,10 @@
 
 #define cudaMalloc torch_cudaMalloc
 #define cudaFree torch_cudaFree
+#define cudaMemcpy torch_cudaMemcpy
+#define cudaMemcpy2D torch_cudaMemcpy2D
+#define cudaMemset torch_cudaMemset
+#define cudaDeviceSynchronize torch_cudaStreamSynchronize
 
 namespace cumesh {
 
@@ -1075,7 +1079,7 @@ void CuMesh::compute_charts(
                 E,
                 this->edge_collapse_costs.ptr
             );
-            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(torch_cudaStreamSynchronize());
 
             // 4. Propagate costs
             size_t C = this->atlas_num_charts;
@@ -1087,7 +1091,7 @@ void CuMesh::compute_charts(
                 C,
                 this->propagated_costs.ptr
             );
-            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(torch_cudaStreamSynchronize());
 
             // 5. Collapse edges
             this->vertices_map.resize(C);      // store collapse map
@@ -1105,7 +1109,7 @@ void CuMesh::compute_charts(
                 this->atlas_chart_normal_cones.ptr,
                 cu_end_flag
             );
-            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(torch_cudaStreamSynchronize());
 
             // End of iteration
             CUDA_CHECK(cudaMemcpy(&h_end_flag, cu_end_flag, sizeof(int), cudaMemcpyDeviceToHost));
@@ -1120,7 +1124,7 @@ void CuMesh::compute_charts(
                 F,
                 reinterpret_cast<int*>(this->temp_storage.ptr)
             );
-            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(cudaDeviceSynchronize());
+            CUDA_CHECK(cudaGetLastError());CUDA_CHECK(torch_cudaStreamSynchronize());
             swap_buffers(this->atlas_chart_ids, this->temp_storage);
         }
 

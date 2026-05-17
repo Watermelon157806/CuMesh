@@ -5,6 +5,10 @@
 
 #define cudaMalloc torch_cudaMalloc
 #define cudaFree torch_cudaFree
+#define cudaMemcpy torch_cudaMemcpy
+#define cudaMemcpy2D torch_cudaMemcpy2D
+#define cudaMemset torch_cudaMemset
+#define cudaDeviceSynchronize torch_cudaStreamSynchronize
 
 namespace cumesh {
 
