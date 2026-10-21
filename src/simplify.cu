@@ -453,7 +453,7 @@ static __global__ void collapse_edges_kernel(
     if (tid >= E) return;
 
     float cost = edge_collapse_costs[tid];
-    if (cost > collapse_thresh) return;
+    if (!isfinite(cost) || cost > collapse_thresh) return;
 
     // get edge
     uint64_t e = edges[tid];

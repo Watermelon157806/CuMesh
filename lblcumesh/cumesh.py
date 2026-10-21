@@ -344,7 +344,9 @@ class CuMesh:
         if verbose:
             pbar = tqdm(total=num_face-target_num_faces, desc="Simplifying", disable=not verbose)
 
-        thresh = options.get('thresh', 1e-8)
+        max_thresh = torch.finfo(torch.float32).max
+        thresh = min(options.get('thresh', 1e-8), max_thresh)
+        assert math.isfinite(thresh), "thresh must be finite"
         lambda_edge_length = options.get('lambda_edge_length', 1e-2)
         lambda_skinny = options.get('lambda_skinny', 1e-3)
         for _ in range(max_iterations):
@@ -360,8 +362,10 @@ class CuMesh:
                 break
             
             del_num_face = num_face - new_num_face
+            if thresh == max_thresh and del_num_face == 0:
+                break
             if del_num_face / num_face < 1e-2:
-                thresh *= 10
+                thresh = min(thresh * 10, max_thresh)
             num_face = new_num_face
             
         if verbose:
