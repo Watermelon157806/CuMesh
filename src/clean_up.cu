@@ -134,6 +134,12 @@ void CuMesh::remove_unreferenced_vertices() {
     size_t V = this->vertices.size;
     size_t F = this->faces.size;
 
+    if (F == 0) {
+        this->vertices.resize(0);
+        this->clear_cache();
+        return;
+    }
+
     // Mark referenced vertices
     int* cu_vertex_is_referenced;
     CUDA_CHECK(cudaMalloc(&cu_vertex_is_referenced, (V+1) * sizeof(int)));

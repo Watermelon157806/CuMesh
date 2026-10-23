@@ -430,7 +430,6 @@ void propagate_cost(
  * @param F: the number of faces
  * @param E: the number of edges
  * @param collapse_thresh: the threshold for cost collapse
- * @param vertices_kept: the flag for vertices kept, shape (V)
  * @param faces_kept: the flag for faces kept, shape (F)
  */
 static __global__ void collapse_edges_kernel(
@@ -446,7 +445,6 @@ static __global__ void collapse_edges_kernel(
     const int F,
     const int E,
     const float collapse_thresh,
-    int* vertices_kept,
     int* faces_kept
 ) {
     const int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -478,7 +476,6 @@ static __global__ void collapse_edges_kernel(
     else if (!v0_is_bound &&  v1_is_bound) w0 = 0.0;
     Vec3f v_new = v0 * w0 + v1 * (1.0f - w0);
     vertices[e0] = { v_new.x, v_new.y, v_new.z };
-    vertices_kept[e1] = 0;
     // delete shared faces
     for (int f = vert2face_offset[e0]; f < vert2face_offset[e0+1]; f++) {
         int fid = vert2face[f];
@@ -500,6 +497,21 @@ static __global__ void collapse_edges_kernel(
         }
         faces[fid] = f_vids;
     }
+}
+
+
+static __global__ void mark_referenced_vertices_kernel(
+    const int3* faces,
+    const int* faces_kept,
+    const int F,
+    int* vertices_kept
+) {
+    const int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= F || !faces_kept[tid]) return;
+    int3 face = faces[tid];
+    atomicExch(vertices_kept + face.x, 1);
+    atomicExch(vertices_kept + face.y, 1);
+    atomicExch(vertices_kept + face.z, 1);
 }
 
 
@@ -550,7 +562,7 @@ void collapse_edges(
     size_t E = ctx.edges.size;
     ctx.vertices_map.resize(V + 1);
     ctx.faces_map.resize(F + 1);
-    ctx.vertices_map.fill(1);
+    ctx.vertices_map.fill(0);
     ctx.faces_map.fill(1);
     collapse_edges_kernel<<<(E+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         ctx.vertices.ptr,
@@ -563,8 +575,16 @@ void collapse_edges(
         ctx.vert_is_boundary.ptr,
         V, F, E,
         collapse_thresh,
-        ctx.vertices_map.ptr,
         ctx.faces_map.ptr
+    );
+    CUDA_CHECK(cudaGetLastError());
+
+    // Keep only vertices referenced by surviving faces after the collapses.
+    mark_referenced_vertices_kernel<<<(F+BLOCK_SIZE-1)/BLOCK_SIZE, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
+        ctx.faces.ptr,
+        ctx.faces_map.ptr,
+        F,
+        ctx.vertices_map.ptr
     );
     CUDA_CHECK(cudaGetLastError());
     
