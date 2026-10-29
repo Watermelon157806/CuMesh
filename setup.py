@@ -138,6 +138,7 @@ ext_modules = [
         extra_compile_args={
             "cxx": cxx_flags,
         },
+        define_macros=[("XA_MULTITHREADED", "0")],
     ),
 ]
 
