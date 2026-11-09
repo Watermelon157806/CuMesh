@@ -179,8 +179,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     py::class_<cumesh_xatlas::XAtlasWrapper>(m, "Atlas")
         .def(py::init<>())
-        .def("add_mesh", &cumesh_xatlas::XAtlasWrapper::AddMesh)
+        .def("add_mesh", &cumesh_xatlas::XAtlasWrapper::AddMesh, py::call_guard<py::gil_scoped_release>())
         .def("compute_charts", &cumesh_xatlas::XAtlasWrapper::ComputeCharts)
         .def("pack_charts", &cumesh_xatlas::XAtlasWrapper::PackCharts)
-        .def("get_mesh", &cumesh_xatlas::XAtlasWrapper::GetMesh);
+        .def("get_mesh", &cumesh_xatlas::XAtlasWrapper::GetMesh, py::call_guard<py::gil_scoped_release>());
 }

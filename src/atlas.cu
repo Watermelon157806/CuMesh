@@ -379,7 +379,7 @@ static void get_chart_connectivity(
     size_t E = mesh.atlas_chart_adj.size;
     size_t C = mesh.atlas_num_charts;
     // 2.1 Count edge number for each chart, along with perim
-    mesh.atlas_chart2edge_cnt.resize(C);
+    mesh.atlas_chart2edge_cnt.resize(C + 1);
     mesh.atlas_chart2edge_cnt.zero();
     mesh.atlas_chart_perims.resize(C);
     mesh.atlas_chart_perims.zero();

@@ -146,7 +146,7 @@ void CuMesh::get_edges() {
     // unique edges
     int* num_edges;
     CUDA_CHECK(cudaMalloc(&num_edges, sizeof(int)));
-    this->edge2face_cnt.resize(F * 3);
+    this->edge2face_cnt.resize(F * 3 + 1);
     CUDA_CHECK(cub::DeviceRunLengthEncode::Encode(
         nullptr, temp_storage_bytes,
         reinterpret_cast<uint64_t*>(this->temp_storage.ptr), this->edges.ptr, this->edge2face_cnt.ptr, num_edges,

@@ -416,76 +416,74 @@ static __global__ void order_selected_boundary_loops_kernel(
     const int* edge2face_offset,
     const int* loop_boundaries,
     const int* loop_boundaries_offset,
+    const int* boundaries,
+    const int* vert2bound,
+    const int* vert2bound_offset,
     const int num_loops,
+    int* next_loop_edges,
     int* ordered_loop_vertices,
     uint8_t* loop_is_valid
 ) {
-    if (blockIdx.x >= num_loops || threadIdx.x != 0) return;
+    if (blockIdx.x >= num_loops) return;
 
     const int loop_id = blockIdx.x;
     const int start = loop_boundaries_offset[loop_id];
     const int end = loop_boundaries_offset[loop_id + 1];
     const int count = end - start;
     if (count < 3) {
-        loop_is_valid[loop_id] = 0;
+        if (threadIdx.x == 0) loop_is_valid[loop_id] = 0;
         return;
     }
 
-    const int first_edge_id = loop_boundaries[start];
-    const int3 first_face = faces[edge2face[edge2face_offset[first_edge_id]]];
-    const uint64_t first_edge = edges[first_edge_id];
-    int first_u = packed_edge_v0(first_edge);
-    int first_v = packed_edge_v1(first_edge);
-    if (!face_has_directed_edge(first_face, first_u, first_v)) {
-        const int tmp = first_u;
-        first_u = first_v;
-        first_v = tmp;
-    }
-
-    ordered_loop_vertices[start + 0] = first_u;
-    int prev_edge_id = first_edge_id;
-    int current_vertex = first_v;
-    bool valid = true;
-
-    for (int i = 1; i < count; ++i) {
-        ordered_loop_vertices[start + i] = current_vertex;
-
-        int next_edge_id = -1;
-        int next_vertex = -1;
-        for (int j = start; j < end; ++j) {
-            const int candidate_edge_id = loop_boundaries[j];
-            if (candidate_edge_id == prev_edge_id) continue;
+    // Find each directed edge's successor in parallel using boundary adjacency.
+    // Adjacency order is not stable; retain the first match in the original
+    // loop order (edge IDs remain sorted by the stable CUB sort/select).
+    for (int local = threadIdx.x; local < count; local += blockDim.x) {
+        const int edge_id = loop_boundaries[start + local];
+        const int3 face = faces[edge2face[edge2face_offset[edge_id]]];
+        const uint64_t edge = edges[edge_id];
+        const int u = packed_edge_v0(edge), v = packed_edge_v1(edge);
+        const int target = face_has_directed_edge(face, u, v) ? v : u;
+        int next_index = end;
+        for (int j = vert2bound_offset[target]; j < vert2bound_offset[target + 1]; ++j) {
+            const int candidate_edge_id = boundaries[vert2bound[j]];
+            if (candidate_edge_id == edge_id) continue;
+            int left = start, right = end;
+            while (left < right) {
+                const int mid = left + (right - left) / 2;
+                if (loop_boundaries[mid] < candidate_edge_id) left = mid + 1;
+                else right = mid;
+            }
+            if (left == end || loop_boundaries[left] != candidate_edge_id || left >= next_index) continue;
 
             const int3 candidate_face = faces[edge2face[edge2face_offset[candidate_edge_id]]];
             const uint64_t candidate_edge = edges[candidate_edge_id];
-            int u = packed_edge_v0(candidate_edge);
-            int v = packed_edge_v1(candidate_edge);
-            if (!face_has_directed_edge(candidate_face, u, v)) {
-                const int tmp = u;
-                u = v;
-                v = tmp;
-            }
-
-            if (u == current_vertex) {
-                next_edge_id = candidate_edge_id;
-                next_vertex = v;
-                break;
-            }
+            const int a = packed_edge_v0(candidate_edge), b = packed_edge_v1(candidate_edge);
+            const int source = face_has_directed_edge(candidate_face, a, b) ? a : b;
+            if (source == target) next_index = left;
         }
+        next_loop_edges[start + local] = next_index == end ? -1 : next_index;
+    }
+    __syncthreads();
+    if (threadIdx.x != 0) return;
 
-        if (next_edge_id < 0) {
-            valid = false;
-            break;
+    int current = start;
+    int final_vertex = -1;
+    for (int i = 0; i < count; ++i) {
+        if (current < 0) {
+            loop_is_valid[loop_id] = 0;
+            return;
         }
-
-        prev_edge_id = next_edge_id;
-        current_vertex = next_vertex;
+        const int edge_id = loop_boundaries[current];
+        const int3 face = faces[edge2face[edge2face_offset[edge_id]]];
+        const uint64_t edge = edges[edge_id];
+        const int u = packed_edge_v0(edge), v = packed_edge_v1(edge);
+        const bool forward = face_has_directed_edge(face, u, v);
+        ordered_loop_vertices[start + i] = forward ? u : v;
+        final_vertex = forward ? v : u;
+        current = next_loop_edges[current];
     }
-
-    if (valid && current_vertex != first_u) {
-        valid = false;
-    }
-    if (!valid) {
+    if (final_vertex != ordered_loop_vertices[start]) {
         loop_is_valid[loop_id] = 0;
         return;
     }
@@ -500,7 +498,6 @@ static __global__ void order_selected_boundary_loops_kernel(
 
     loop_is_valid[loop_id] = 1;
 }
-
 
 static __device__ __forceinline__ int find_edge_index(
     const uint64_t* edges,
@@ -528,7 +525,7 @@ static __global__ void compute_ear_clip_triangle_counts_kernel(
     const int num_edges,
     const int* loop_boundaries_offset,
     const int* ordered_loop_vertices,
-    int* loop_work_indices,
+    int2* loop_work_links,
     const uint8_t* loop_is_valid,
     const int num_loops,
     int* loop_triangle_counts
@@ -545,17 +542,18 @@ static __global__ void compute_ear_clip_triangle_counts_kernel(
     if (loop_size < 3) return;
 
     for (int i = 0; i < loop_size; ++i) {
-        loop_work_indices[loop_start + i] = i;
+        loop_work_links[loop_start + i] = make_int2((i + loop_size - 1) % loop_size, (i + 1) % loop_size);
     }
 
+    int first = 0;
     int work_size = loop_size;
     int tri_count = 0;
     while (work_size > 3) {
         int ear_i = -1;
-        for (int i = 0; i < work_size; ++i) {
-            const int prev_local = loop_work_indices[loop_start + (i - 1 + work_size) % work_size];
-            const int curr_local = loop_work_indices[loop_start + i];
-            const int next_local = loop_work_indices[loop_start + (i + 1) % work_size];
+        int curr_local = first;
+        for (int i = 0; i < work_size; ++i, curr_local = loop_work_links[loop_start + curr_local].y) {
+            const int prev_local = loop_work_links[loop_start + curr_local].x;
+            const int next_local = loop_work_links[loop_start + curr_local].y;
             const int a = ordered_loop_vertices[loop_start + prev_local];
             const int b = ordered_loop_vertices[loop_start + curr_local];
             const int c = ordered_loop_vertices[loop_start + next_local];
@@ -564,7 +562,7 @@ static __global__ void compute_ear_clip_triangle_counts_kernel(
             const uint64_t diagonal = (uint64_t(min(a, c)) << 32) | uint64_t(max(a, c));
             if (find_edge_index(edges, num_edges, diagonal) >= 0) continue;
 
-            ear_i = i;
+            ear_i = curr_local;
             break;
         }
 
@@ -573,9 +571,10 @@ static __global__ void compute_ear_clip_triangle_counts_kernel(
             return;
         }
 
-        for (int i = ear_i; i < work_size - 1; ++i) {
-            loop_work_indices[loop_start + i] = loop_work_indices[loop_start + i + 1];
-        }
+        const int2 neighbors = loop_work_links[loop_start + ear_i];
+        loop_work_links[loop_start + neighbors.x].y = neighbors.y;
+        loop_work_links[loop_start + neighbors.y].x = neighbors.x;
+        if (ear_i == first) first = neighbors.y;
         work_size--;
         tri_count++;
     }
@@ -592,7 +591,7 @@ static __global__ void triangulate_selected_boundary_loops_kernel(
     const int num_edges,
     const int* loop_boundaries_offset,
     const int* ordered_loop_vertices,
-    int* loop_work_indices,
+    int2* loop_work_links,
     const int* loop_triangle_offsets,
     const int* loop_triangle_counts,
     const uint8_t* loop_is_valid,
@@ -612,16 +611,17 @@ static __global__ void triangulate_selected_boundary_loops_kernel(
     if (loop_size < 3 || tri_count_target == 0) return;
 
     for (int i = 0; i < loop_size; ++i) {
-        loop_work_indices[loop_start + i] = i;
+        loop_work_links[loop_start + i] = make_int2((i + loop_size - 1) % loop_size, (i + 1) % loop_size);
     }
+    int first = 0;
     int work_size = loop_size;
     int tri_count = 0;
     while (work_size > 3) {
         int ear_i = -1;
-        for (int i = 0; i < work_size; ++i) {
-            const int prev_local = loop_work_indices[loop_start + (i - 1 + work_size) % work_size];
-            const int curr_local = loop_work_indices[loop_start + i];
-            const int next_local = loop_work_indices[loop_start + (i + 1) % work_size];
+        int curr_local = first;
+        for (int i = 0; i < work_size; ++i, curr_local = loop_work_links[loop_start + curr_local].y) {
+            const int prev_local = loop_work_links[loop_start + curr_local].x;
+            const int next_local = loop_work_links[loop_start + curr_local].y;
             const int a = ordered_loop_vertices[loop_start + prev_local];
             const int b = ordered_loop_vertices[loop_start + curr_local];
             const int c = ordered_loop_vertices[loop_start + next_local];
@@ -629,7 +629,7 @@ static __global__ void triangulate_selected_boundary_loops_kernel(
 
             const uint64_t diagonal = (uint64_t(min(a, c)) << 32) | uint64_t(max(a, c));
             if (find_edge_index(edges, num_edges, diagonal) >= 0) continue;
-            ear_i = i;
+            ear_i = curr_local;
             break;
         }
 
@@ -637,28 +637,28 @@ static __global__ void triangulate_selected_boundary_loops_kernel(
             return;
         }
 
-        const int prev_local = loop_work_indices[loop_start + (ear_i - 1 + work_size) % work_size];
-        const int curr_local = loop_work_indices[loop_start + ear_i];
-        const int next_local = loop_work_indices[loop_start + (ear_i + 1) % work_size];
+        const int prev_local = loop_work_links[loop_start + ear_i].x;
+        const int next_local = loop_work_links[loop_start + ear_i].y;
         int3 tri = {
             ordered_loop_vertices[loop_start + prev_local],
-            ordered_loop_vertices[loop_start + curr_local],
+            ordered_loop_vertices[loop_start + ear_i],
             ordered_loop_vertices[loop_start + next_local]
         };
         output_faces[tri_start + tri_count] = tri;
         tri_count++;
 
-        for (int i = ear_i; i < work_size - 1; ++i) {
-            loop_work_indices[loop_start + i] = loop_work_indices[loop_start + i + 1];
-        }
+        const int2 neighbors = loop_work_links[loop_start + ear_i];
+        loop_work_links[loop_start + neighbors.x].y = neighbors.y;
+        loop_work_links[loop_start + neighbors.y].x = neighbors.x;
+        if (ear_i == first) first = neighbors.y;
         work_size--;
     }
 
     if (work_size == 3) {
         int3 tri = {
-            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 0]],
-            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 1]],
-            ordered_loop_vertices[loop_start + loop_work_indices[loop_start + 2]]
+            ordered_loop_vertices[loop_start + first],
+            ordered_loop_vertices[loop_start + loop_work_links[loop_start + first].y],
+            ordered_loop_vertices[loop_start + loop_work_links[loop_start + first].x]
         };
         output_faces[tri_start + tri_count] = tri;
     }
@@ -834,35 +834,42 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
         cu_new_loop_boundaries_cnt, cu_new_loop_boundaries_offset,
         new_num_bound_loops + 1, cumesh::torch_cuda_stream()));
     int* cu_ordered_loop_vertices;
+    int* cu_next_loop_edges;
     uint8_t* cu_loop_is_valid;
     CUDA_CHECK(cudaMalloc(&cu_ordered_loop_vertices, new_num_loop_boundaries * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_next_loop_edges, new_num_loop_boundaries * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_loop_is_valid, new_num_bound_loops * sizeof(uint8_t)));
-    order_selected_boundary_loops_kernel<<<new_num_bound_loops, 1, 0, cumesh::torch_cuda_stream()>>>(
+    order_selected_boundary_loops_kernel<<<new_num_bound_loops, BLOCK_SIZE, 0, cumesh::torch_cuda_stream()>>>(
         this->faces.ptr,
         this->edges.ptr,
         this->edge2face.ptr,
         this->edge2face_offset.ptr,
         cu_new_loop_boundaries,
         cu_new_loop_boundaries_offset,
+        this->boundaries.ptr,
+        this->vert2bound.ptr,
+        this->vert2bound_offset.ptr,
         new_num_bound_loops,
+        cu_next_loop_edges,
         cu_ordered_loop_vertices,
         cu_loop_is_valid
     );
     CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaFree(cu_next_loop_edges));
 
     int* cu_loop_triangle_counts;
     int* cu_loop_triangle_offsets;
-    int* cu_loop_work_indices;
+    int2* cu_loop_work_links;
     CUDA_CHECK(cudaMalloc(&cu_loop_triangle_counts, (new_num_bound_loops + 1) * sizeof(int)));
     CUDA_CHECK(cudaMalloc(&cu_loop_triangle_offsets, (new_num_bound_loops + 1) * sizeof(int)));
-    CUDA_CHECK(cudaMalloc(&cu_loop_work_indices, new_num_loop_boundaries * sizeof(int)));
+    CUDA_CHECK(cudaMalloc(&cu_loop_work_links, new_num_loop_boundaries * sizeof(int2)));
     CUDA_CHECK(cudaMemset(cu_loop_triangle_counts, 0, (new_num_bound_loops + 1) * sizeof(int)));
     compute_ear_clip_triangle_counts_kernel<<<new_num_bound_loops, 1, 0, cumesh::torch_cuda_stream()>>>(
         this->edges.ptr,
         this->edges.size,
         cu_new_loop_boundaries_offset,
         cu_ordered_loop_vertices,
-        cu_loop_work_indices,
+        cu_loop_work_links,
         cu_loop_is_valid,
         new_num_bound_loops,
         cu_loop_triangle_counts
@@ -896,7 +903,7 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
         CUDA_CHECK(cudaFree(cu_loop_is_valid));
         CUDA_CHECK(cudaFree(cu_loop_triangle_counts));
         CUDA_CHECK(cudaFree(cu_loop_triangle_offsets));
-        CUDA_CHECK(cudaFree(cu_loop_work_indices));
+        CUDA_CHECK(cudaFree(cu_loop_work_links));
         return;
     }
 
@@ -907,7 +914,7 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
         this->edges.size,
         cu_new_loop_boundaries_offset,
         cu_ordered_loop_vertices,
-        cu_loop_work_indices,
+        cu_loop_work_links,
         cu_loop_triangle_offsets,
         cu_loop_triangle_counts,
         cu_loop_is_valid,
@@ -931,7 +938,7 @@ void CuMesh::fill_holes(float max_hole_perimeter) {
     CUDA_CHECK(cudaFree(cu_loop_is_valid));
     CUDA_CHECK(cudaFree(cu_loop_triangle_counts));
     CUDA_CHECK(cudaFree(cu_loop_triangle_offsets));
-    CUDA_CHECK(cudaFree(cu_loop_work_indices));
+    CUDA_CHECK(cudaFree(cu_loop_work_links));
     CUDA_CHECK(cudaFree(cu_added_faces));
 
     // Delete all cached info since mesh has changed
